@@ -1,0 +1,29 @@
+nicegui-pyodide
+Copyright (c) 2026 evnchn
+Licensed under the MIT License (see LICENSE).
+
+------------------------------------------------------------------------------
+Third-party code bundled in this package
+------------------------------------------------------------------------------
+
+This package redistributes MODIFIED copies of two files from NiceGUI
+(https://github.com/zauberzeug/nicegui), which is licensed under the MIT License:
+
+  - nicegui_pyodide/static/nicegui.js
+        patched from nicegui/static/nicegui.js
+  - nicegui_pyodide/static/component_overrides/markdown.js
+        patched from nicegui/elements/markdown.js
+
+NiceGUI is Copyright (c) Zauberzeug GmbH and is used here under the terms of the
+MIT License. The original license text is at:
+
+  https://github.com/zauberzeug/nicegui/blob/main/LICENSE
+
+The modifications route NiceGUI's client transport through an in-process Pyodide
+bridge instead of socket.io; all new behavior is gated on `window.niceguiBridge`
+and is backward-compatible with unmodified NiceGUI (server) mode.
+
+At build time (`nicegui-pyodide-build`), additional unmodified vendor assets
+(Quasar, Vue, Tailwind, fonts, CSS, element component JS) are copied out of the
+user's own installed NiceGUI into the output directory. Those assets are NOT
+distributed in this repository; they retain their respective upstream licenses.

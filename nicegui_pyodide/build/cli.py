@@ -1,0 +1,315 @@
+"""Assemble a servable Pyodide demo directory from the *installed* stock NiceGUI.
+
+Unlike the upstream ``examples/pyodide/prepare.py`` (which built a wheel from a
+NiceGUI *source checkout*), this operates entirely against the installed packages:
+
+* copies the browser vendor assets (Quasar, Vue, Tailwind, fonts, CSS) out of the
+  installed ``nicegui/static`` — but serves **nicegui-pyodide's pyodide-patched
+  ``nicegui.js``**, not stock's;
+* copies element component JS + ESM bundles and writes the import map;
+* builds a *stripped* ``nicegui`` wheel (Python source + metadata only) straight
+  from the installed package, and a wheel for ``nicegui_pyodide`` itself;
+* drops in the HTML / entrypoint / config / example ``app.py`` templates, with the
+  actual wheel filenames substituted in.
+
+Run ``nicegui-pyodide-build [outdir]`` then serve ``outdir`` with any static server.
+"""
+from __future__ import annotations
+
+import argparse
+import csv
+import hashlib
+import io
+import json as json_mod
+import re
+import shutil
+import sys
+import zipfile
+from base64 import urlsafe_b64encode
+from pathlib import Path
+
+PKG_DIR = Path(__file__).resolve().parent.parent          # nicegui_pyodide/
+TEMPLATES_DIR = PKG_DIR / 'templates'
+PATCHED_JS = PKG_DIR / 'static' / 'nicegui.js'
+
+# Vendor assets copied verbatim from the installed nicegui/static (nicegui.js excluded
+# — we ship the patched copy instead).
+VENDOR_FILES = [
+    'nicegui.css',
+    'quasar.umd.prod.js',
+    'quasar.important.prod.css',
+    'quasar.unimportant.prod.css',
+    'tailwindcss.min.js',
+    'vue.esm-browser.prod.js',
+]
+
+# Wheel filenames are computed from the real package versions at build time
+# (PEP 427 requires ``{name}-{version}-py3-none-any.whl``; micropip parses the
+# version from the filename, so it must be a valid PEP 440 version).
+
+# The shipped static/nicegui.js is patched from this exact NiceGUI release. Building
+# against a different patch release risks a client/JS protocol mismatch → warn loudly.
+TESTED_NICEGUI = '3.14.0'
+
+
+def _nicegui_meta():
+    """Return (nicegui_module, package_dir, METADATA_text) resolved via importlib.metadata.
+
+    Using the distribution tied to the *imported* nicegui avoids picking a stale or
+    wrong ``nicegui-*.dist-info`` when several sit side by side.
+    """
+    import importlib.metadata as im  # pylint: disable=import-outside-toplevel
+    import nicegui  # pylint: disable=import-outside-toplevel
+    pkg = Path(nicegui.__file__).parent
+    try:
+        dist = im.distribution('nicegui')
+        metadata = dist.read_text('METADATA')
+        if dist.version != nicegui.__version__:
+            print(f'  WARNING: dist metadata version {dist.version} != imported nicegui '
+                  f'{nicegui.__version__}; using imported version for the wheel.')
+    except im.PackageNotFoundError:
+        metadata = None
+    if not metadata:
+        cands = sorted(pkg.parent.glob('nicegui-*.dist-info'))
+        if not cands:
+            sys.exit('Could not locate nicegui distribution metadata.')
+        metadata = (cands[-1] / 'METADATA').read_text(encoding='utf-8')
+    if nicegui.__version__ != TESTED_NICEGUI:
+        print(f'  WARNING: installed nicegui {nicegui.__version__} != tested {TESTED_NICEGUI}. '
+              f'The bundled patched nicegui.js/markdown.js target {TESTED_NICEGUI}; '
+              f'the frontend protocol may have drifted. Regenerate the JS if the demo misbehaves.')
+    return nicegui, pkg, metadata
+
+
+# --------------------------------------------------------------------------- static
+
+def prepare_static_files(out: Path) -> None:
+    _, pkg, _ = _nicegui_meta()
+    static = pkg / 'static'
+    print(f'Copying vendor assets from {static}')
+    for name in VENDOR_FILES:
+        shutil.copy2(static / name, out / name)
+        print(f'  {name}')
+
+    # the pyodide-patched nicegui.js (shipped by this extension)
+    shutil.copy2(PATCHED_JS, out / 'nicegui.js')
+    print('  nicegui.js  (pyodide-patched, from nicegui_pyodide)')
+
+    utils_src = static / 'utils'
+    if utils_src.is_dir():
+        dst = out / 'static' / 'utils'
+        dst.mkdir(parents=True, exist_ok=True)
+        for f in utils_src.glob('*.js'):
+            shutil.copy2(f, dst / f.name)
+        print(f'  static/utils/ ({sum(1 for _ in utils_src.glob("*.js"))} files)')
+
+    if (static / 'fonts.css').exists():
+        shutil.copy2(static / 'fonts.css', out / 'fonts.css')
+        print('  fonts.css')
+    fonts_src = static / 'fonts'
+    if fonts_src.is_dir():
+        dst = out / 'fonts'
+        dst.mkdir(parents=True, exist_ok=True)
+        for f in fonts_src.glob('*.woff2'):
+            shutil.copy2(f, dst / f.name)
+        print(f'  fonts/ ({sum(1 for _ in fonts_src.glob("*.woff2"))} files)')
+
+    if (static / 'dompurify.mjs').exists():
+        dst = out / 'static'
+        dst.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(static / 'dompurify.mjs', dst / 'dompurify.mjs')
+        print('  static/dompurify.mjs')
+
+
+# ----------------------------------------------------------------------- components
+
+def prepare_components(out: Path) -> None:
+    from nicegui import ui as _ui  # pylint: disable=import-outside-toplevel
+    # force PEP 562 lazy imports so every element registers its js_components / esm_modules
+    for name in getattr(_ui, '__all__', None) or list(getattr(_ui, '_LAZY_IMPORTS', {})):
+        try:
+            getattr(_ui, name)
+        except Exception:  # pylint: disable=broad-except
+            pass
+    from nicegui.dependencies import esm_modules, js_components  # pylint: disable=import-outside-toplevel
+    _, pkg, _ = _nicegui_meta()
+    elements_dir = pkg / 'elements'
+
+    components_dir = out / 'components'
+    esm_dir = out / 'esm'
+    for d in (components_dir, esm_dir):
+        if d.exists():
+            shutil.rmtree(d)
+
+    print('Copying component JS...')
+    for comp in js_components.values():
+        if not comp.path.exists():
+            continue
+        try:
+            rel = comp.path.relative_to(elements_dir)
+        except ValueError:
+            continue
+        dst = components_dir / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(comp.path, dst)
+
+    # Override specific component JS with pyodide-patched copies (e.g. markdown.js loads
+    # its codehilite CSS from a static ./dynamic_resources/ path instead of a server route).
+    overrides = PKG_DIR / 'static' / 'component_overrides'
+    if overrides.is_dir():
+        for ov in overrides.glob('*.js'):
+            target = components_dir / ov.name
+            if target.exists():
+                shutil.copy2(ov, target)
+                print(f'  override components/{ov.name} (pyodide-patched)')
+
+    print('Copying ESM bundles...')
+    imports: dict[str, str] = {}
+    for esm in esm_modules.values():
+        if not esm.path.is_dir():
+            continue
+        dest = esm_dir / esm.name
+        dest.mkdir(parents=True, exist_ok=True)
+        for src in esm.path.rglob('*'):
+            if not src.is_file() or src.suffix == '.map':
+                continue
+            rel = src.relative_to(esm.path)
+            (dest / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest / rel)
+        imports[esm.name] = f'./esm/{esm.name}/index.js'
+        imports[esm.name + '/'] = f'./esm/{esm.name}/'
+
+    imports['dompurify'] = './static/dompurify.mjs'
+    importmap = {'imports': dict(sorted(imports.items()))}
+    tag = f'<script type="importmap">\n{json_mod.dumps(importmap, indent=2)}\n    </script>'
+    html_path = out / 'index.html'
+    html = html_path.read_text()
+    html = re.sub(
+        r'<!-- BEGIN IMPORTMAP.*?-->.*?<!-- END IMPORTMAP -->',
+        '<!-- BEGIN IMPORTMAP (generated by nicegui-pyodide-build — do not edit) -->\n'
+        f'    {tag}\n    <!-- END IMPORTMAP -->',
+        html, flags=re.DOTALL,
+    )
+    html_path.write_text(html)
+    print(f'Import map: {len(imports)} entries')
+
+
+def prepare_dynamic_resources(out: Path) -> None:
+    try:
+        from pygments.formatters import HtmlFormatter  # pylint: disable=import-outside-toplevel
+    except ImportError:
+        print('  Pygments not installed, skipping codehilite.css')
+        return
+    css = (HtmlFormatter(nobackground=True).get_style_defs('.codehilite')
+           + HtmlFormatter(nobackground=True, style='github-dark').get_style_defs('.body--dark .codehilite'))
+    name = f'codehilite_{hashlib.sha256(css.encode()).hexdigest()[:32]}.css'
+    d = out / 'dynamic_resources'
+    d.mkdir(parents=True, exist_ok=True)
+    (d / name).write_text(css)
+    print(f'Generated dynamic_resources/{name}')
+
+
+# ---------------------------------------------------------------------------- wheels
+
+_BUILD_ARTIFACTS = {'package.json', 'package-lock.json', 'rollup.config.mjs', 'vite.config.js'}
+
+
+def _keep_nicegui(rel: str) -> bool:
+    """Keep only Python source + metadata; drop vendor static + element JS bundles."""
+    if rel.startswith('nicegui/static/'):
+        # keep only the couple of static files read at import time
+        return rel in ('nicegui/static/headwind.css', 'nicegui/static/sad_face.svg')
+    parts = rel.split('/')
+    if len(parts) >= 3 and parts[1] == 'elements':
+        if 'dist' in parts or 'src' in parts or parts[-1] in _BUILD_ARTIFACTS:
+            return False
+    return True
+
+
+def _build_wheel_from_dir(pkg_dir: Path, top: str, dist_name: str, version: str,
+                          metadata: str, extra_meta: dict, keep, dst: Path) -> None:
+    """Zip ``pkg_dir`` (installed package) into a wheel under arcname prefix ``top``."""
+    dist_info = f'{dist_name}-{version}.dist-info'
+    entries: list[tuple[str, bytes]] = []
+    for f in sorted(pkg_dir.rglob('*')):
+        if not f.is_file() or '__pycache__' in f.parts:
+            continue
+        rel = f'{top}/{f.relative_to(pkg_dir).as_posix()}'
+        if keep is not None and not keep(rel):
+            continue
+        entries.append((rel, f.read_bytes()))
+    entries.append((f'{dist_info}/METADATA', metadata.encode()))
+    entries.append((f'{dist_info}/WHEEL',
+                    b'Wheel-Version: 1.0\nGenerator: nicegui-pyodide-build\nRoot-Is-Purelib: true\nTag: py3-none-any\n'))
+    for name, content in extra_meta.items():
+        entries.append((f'{dist_info}/{name}',
+                        content if isinstance(content, bytes) else content.encode()))
+    # RECORD
+    rec = io.StringIO()
+    w = csv.writer(rec)
+    for arc, data in entries:
+        digest = urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b'=').decode()
+        w.writerow([arc, f'sha256={digest}', len(data)])
+    w.writerow([f'{dist_info}/RECORD', '', ''])
+    entries.append((f'{dist_info}/RECORD', rec.getvalue().encode()))
+
+    with zipfile.ZipFile(dst, 'w', zipfile.ZIP_DEFLATED) as z:
+        for arc, data in entries:
+            z.writestr(arc, data)
+    print(f'  {dst.name}  ({dst.stat().st_size // 1024} KB, {len(entries)} entries)')
+
+
+def build_wheels(out: Path) -> tuple[str, str]:
+    nicegui, pkg, metadata = _nicegui_meta()
+    version = nicegui.__version__
+    nicegui_wheel = f'nicegui-{version}-py3-none-any.whl'
+    print('Building stripped nicegui wheel...')
+    _build_wheel_from_dir(pkg, 'nicegui', 'nicegui', version, metadata, {}, _keep_nicegui,
+                          out / nicegui_wheel)
+
+    print('Building nicegui_pyodide wheel...')
+    self_pkg = PKG_DIR
+    import nicegui_pyodide  # pylint: disable=import-outside-toplevel
+    self_ver = nicegui_pyodide.__version__
+    self_wheel = f'nicegui_pyodide-{self_ver}-py3-none-any.whl'
+    self_meta = (f'Metadata-Version: 2.1\nName: nicegui-pyodide\nVersion: {self_ver}\n'
+                 'Summary: Run NiceGUI in the browser via Pyodide.\n')
+    _build_wheel_from_dir(self_pkg, 'nicegui_pyodide', 'nicegui_pyodide', self_ver, self_meta, {},
+                          None, out / self_wheel)
+    return nicegui_wheel, self_wheel
+
+
+# -------------------------------------------------------------------------- templates
+
+def copy_templates(out: Path, nicegui_wheel: str, self_wheel: str) -> None:
+    for name in ('index.html', 'pyscript.toml', 'app.py'):
+        shutil.copy2(TEMPLATES_DIR / name, out / name)
+    entry = (TEMPLATES_DIR / 'entrypoint.py').read_text()
+    entry = entry.replace('{{NICEGUI_WHEEL}}', nicegui_wheel).replace('{{PYODIDE_WHEEL}}', self_wheel)
+    (out / 'entrypoint.py').write_text(entry)
+    print('Copied templates (index.html, entrypoint.py, pyscript.toml, app.py)')
+
+
+# ------------------------------------------------------------------------------- main
+
+def build(output_dir: str = 'pyodide-dist') -> Path:
+    out = Path(output_dir).resolve()
+    out.mkdir(parents=True, exist_ok=True)
+    print(f'Building nicegui-pyodide demo into {out}\n')
+    nicegui_wheel, self_wheel = build_wheels(out)     # first: real wheel names feed the entrypoint
+    copy_templates(out, nicegui_wheel, self_wheel)    # index.html must exist before importmap injection
+    prepare_static_files(out)
+    prepare_components(out)                            # injects the import map into index.html
+    prepare_dynamic_resources(out)
+    print(f'\nReady. Serve with:\n  python -m http.server -d {out} 8080')
+    return out
+
+
+def main() -> None:
+    p = argparse.ArgumentParser(description='Assemble a Pyodide demo dir for stock NiceGUI.')
+    p.add_argument('output_dir', nargs='?', default='pyodide-dist', help='output directory')
+    build(p.parse_args().output_dir)
+
+
+if __name__ == '__main__':
+    main()
