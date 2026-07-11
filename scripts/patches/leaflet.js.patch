@@ -1,0 +1,20 @@
+--- a/leaflet.js
++++ b/leaflet.js
+@@ -15,13 +15,14 @@
+   },
+   async mounted() {
+     await this.$nextTick(); // wait for window.path_prefix to be set
+-    await loadResource(window.path_prefix + `${this.resourcePath}/leaflet/leaflet.css`);
++    const resourceBase = window.niceguiBridge ? "./esm/nicegui-leaflet" : window.path_prefix + this.resourcePath;
++    await loadResource(`${resourceBase}/leaflet/leaflet.css`);
+     window.L = L;
+     await Promise.all(this.additionalResources.map((resource) => loadResource(resource)));
+     if (this.drawControl) {
+       await Promise.all([
+-        loadResource(window.path_prefix + `${this.resourcePath}/leaflet-draw/leaflet.draw.css`),
+-        loadResource(window.path_prefix + `${this.resourcePath}/leaflet-draw/leaflet.draw.js`),
++        loadResource(`${resourceBase}/leaflet-draw/leaflet.draw.css`),
++        loadResource(`${resourceBase}/leaflet-draw/leaflet.draw.js`),
+       ]);
+     }
+     this.map = L.map(this.$el, {
