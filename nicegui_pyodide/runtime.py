@@ -6,7 +6,7 @@ Typical use from a PyScript/Pyodide entrypoint::
     from nicegui import ui
     from nicegui_pyodide import page, PyodideRuntime
 
-    with Client(page('')) as client:
+    with Client(page('/')) as client:
         ui.label('Hello from Pyodide!')
         ui.button('Click me!', on_click=lambda: ui.notify('Clicked!'))
 
@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 import nicegui
 from nicegui import core, json
 from nicegui.dependencies import JsComponent
+from starlette.requests import Request
 
 from .bridge import PyodideBridge
 from .outbox import PyodideOutbox
@@ -71,7 +72,7 @@ class PyodideRuntime:
         self.bridge = PyodideBridge()
         core.sio = self.bridge
 
-        core.loop = asyncio.get_event_loop()
+        core.loop = asyncio.get_running_loop()
 
         # replace the client's outbox with the microtask-flushing PyodideOutbox
         self.outbox = PyodideOutbox(client)
@@ -80,6 +81,10 @@ class PyodideRuntime:
         # mark the client as "connected" (no real socket, but ready)
         client.tab_id = 'pyodide'
         client._temporary_socket_id = 'pyodide'  # pylint: disable=protected-access
+        client._request = Request({'type': 'http', 'headers': [], 'query_string': b''})  # pylint: disable=protected-access
+
+        # proxies registered on the JS bridge, tracked so a re-mount can destroy them
+        self._proxies: list = []
 
         # start the app to trigger startup handlers (e.g. timer background tasks)
         if not core.app.is_started:
@@ -99,10 +104,16 @@ class PyodideRuntime:
         components = self._collect_components()
         components_json = json.dumps(components) if components else None
 
-        # register Python callbacks on the JS bridge
-        window.niceguiBridge.onEvent = create_proxy(self._handle_event)
-        window.niceguiBridge.onJavascriptResponse = create_proxy(self._handle_javascript_response)
-        window.niceguiBridge.onUpload = create_proxy(self._handle_upload)
+        # register Python callbacks on the JS bridge, destroying any from a previous mount
+        for proxy in self._proxies:
+            proxy.destroy()
+        on_event = create_proxy(self._handle_event)
+        on_javascript_response = create_proxy(self._handle_javascript_response)
+        on_upload = create_proxy(self._handle_upload)
+        window.niceguiBridge.onEvent = on_event
+        window.niceguiBridge.onJavascriptResponse = on_javascript_response
+        window.niceguiBridge.onUpload = on_upload
+        self._proxies = [on_event, on_javascript_response, on_upload]
 
         config = {
             'brand': core.app.config.quasar_config.get('brand', {}),
@@ -115,6 +126,13 @@ class PyodideRuntime:
         await window.createNiceGUIApp(elements_json, config_json, components_json)
 
         setattr(window, '__pyodide_ready', True)
+
+        # drive the real client lifecycle (connect handlers, app.storage.tab) without a socket.
+        # tab storage MUST exist before handle_handshake runs the connect handlers, which may
+        # access app.storage.tab synchronously.
+        await core.app.storage._create_tab_storage(self.client.tab_id)  # pylint: disable=protected-access
+        self.client.handle_handshake('pyodide', 'pyodide', None)
+        await self.outbox.flush()
 
     def _collect_components(self) -> list:
         """Collect Vue component URLs for elements that need custom JS components.
@@ -155,7 +173,7 @@ class PyodideRuntime:
         import base64  # pylint: disable=import-outside-toplevel
 
         from nicegui.elements.upload import Upload  # pylint: disable=import-outside-toplevel
-        from nicegui.elements.upload_files import FileUpload, SmallFileUpload  # pylint: disable=import-outside-toplevel
+        from nicegui.elements.upload_files import SmallFileUpload  # pylint: disable=import-outside-toplevel
         from nicegui.events import UiEventArguments, handle_event  # pylint: disable=import-outside-toplevel
 
         msg = json.loads(msg_json)
