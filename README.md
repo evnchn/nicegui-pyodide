@@ -77,17 +77,17 @@ special handling in the browser. Status against the pinned NiceGUI release:
 | --- | --- | --- |
 | labels, buttons, inputs, layout, tables, most Quasar wrappers | ✅ works | pure client-side; no server assumption |
 | `ui.markdown` (incl. Mermaid, code highlighting) | ✅ works (override) | codehilite CSS served from `./dynamic_resources/` instead of a server route |
-| `ui.scene` / `ui.scene_view` (3D / WebGL) | 🔶 override shipped | the `init` handshake polled `window.socket.id`; a minimal `window.socket` stand-in is now provided in Pyodide mode (not yet browser-verified) |
-| `ui.leaflet` (map) | 🔶 override shipped | same `init` shim, plus CSS/JS (`leaflet`, optional `leaflet-draw`) resolved from `./esm/nicegui-leaflet/` (not yet browser-verified) |
-| `ui.xterm` (terminal) | 🔶 override shipped | `xterm.css` resolved from `./esm/nicegui-xterm/` instead of a server route (not yet browser-verified) |
+| `ui.scene` / `ui.scene_view` (3D / WebGL) | ✅ works (shim) | the `init` handshake polled `window.socket.id`; a minimal `window.socket` stand-in is provided in Pyodide mode. Browser-verified (WebGL canvas renders) |
+| `ui.leaflet` (map) | ✅ works (override) | same `init` shim, plus CSS/JS (`leaflet`, optional `leaflet-draw`) resolved from `./esm/nicegui-leaflet/`. Browser-verified (map + tiles render) |
+| `ui.xterm` (terminal) | ✅ works (override) | `xterm.css` resolved from `./esm/nicegui-xterm/` instead of a server route. Browser-verified (terminal renders) |
 | `ui.echart` with a `theme` **URL** string | ⚠️ partial | inline theme objects work; a theme passed as a URL `fetch()`es a server path — it fails soft (theme just doesn't apply). Use an inline theme object |
 | `ui.image` / `ui.interactive_image` / `ui.video` / `ui.audio` / `ui.link` with a **root-relative** `src`/`href` (e.g. `/foo.png`) | ⚠️ partial | such paths were `app.add_static_files` / uploaded-file routes with no backend here. Use absolute URLs, `data:`/`blob:` URIs, or bundle the asset. External URLs are unaffected |
 | `@ui.page` server routes, `app.add_static_files`, HTTP endpoints, native mode, multiprocessing | ❌ unsupported | require a real backend; no-op or unavailable in the browser (use the `Client(page(...))` pattern shown above) |
 
 The overridden/shimmed elements (`scene`, `leaflet`, `xterm`) are the socket.io/handshake
 and static-route cases that would otherwise fail with an opaque `TypeError` (`window.socket` is
-`undefined`) or a silent missing-stylesheet. Genuinely server-bound features (last row) are
-documented as unsupported rather than patched.
+`undefined`) or a silent missing-stylesheet; all three are covered by the browser smoke test.
+Genuinely server-bound features (last row) are documented as unsupported rather than patched.
 
 ## Version pinning
 
