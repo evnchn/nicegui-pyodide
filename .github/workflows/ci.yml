@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.14.x line the bundled static/nicegui.js is patched from; add patch releases here.
+        nicegui: ['3.14.0']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install package + test deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[test]'
+          pip install 'nicegui==${{ matrix.nicegui }}'
+      - name: Install Chromium for Playwright
+        run: playwright install --with-deps chromium
+      - name: Run browser smoke test  (builds the demo itself)
+        run: pytest -q tests/test_browser.py
+      - name: Oracle self-test — smoke test MUST fail on a deliberately broken build
+        env:
+          NICEGUI_PYODIDE_TEST_BREAK: '1'
+        run: |
+          if pytest -q tests/test_browser.py; then
+            echo "::error::smoke test PASSED on a sabotaged build — the oracle is always-green"
+            exit 1
+          fi
+          echo "OK: smoke test correctly failed on the sabotaged build"

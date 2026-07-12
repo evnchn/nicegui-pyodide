@@ -157,11 +157,12 @@ def prepare_components(out: Path) -> None:
     # its codehilite CSS from a static ./dynamic_resources/ path instead of a server route).
     overrides = PKG_DIR / 'static' / 'component_overrides'
     if overrides.is_dir():
-        for ov in overrides.glob('*.js'):
-            target = components_dir / ov.name
+        for ov in overrides.rglob('*.js'):
+            rel = ov.relative_to(overrides)
+            target = components_dir / rel
             if target.exists():
                 shutil.copy2(ov, target)
-                print(f'  override components/{ov.name} (pyodide-patched)')
+                print(f'  override components/{rel.as_posix()} (pyodide-patched)')
 
     print('Copying ESM bundles...')
     imports: dict[str, str] = {}
@@ -227,8 +228,13 @@ def _keep_nicegui(rel: str) -> bool:
 
 
 def _build_wheel_from_dir(pkg_dir: Path, top: str, dist_name: str, version: str,
-                          metadata: str, extra_meta: dict, keep, dst: Path) -> None:
-    """Zip ``pkg_dir`` (installed package) into a wheel under arcname prefix ``top``."""
+                          metadata: str, extra_meta: dict, keep, dst: Path,
+                          extra_files: dict | None = None) -> None:
+    """Zip ``pkg_dir`` (installed package) into a wheel under arcname prefix ``top``.
+
+    ``extra_files`` (arcname -> bytes) are synthetic entries added verbatim — used to
+    ship directory markers for content that ``keep`` strips but that must still exist.
+    """
     dist_info = f'{dist_name}-{version}.dist-info'
     entries: list[tuple[str, bytes]] = []
     for f in sorted(pkg_dir.rglob('*')):
@@ -238,6 +244,8 @@ def _build_wheel_from_dir(pkg_dir: Path, top: str, dist_name: str, version: str,
         if keep is not None and not keep(rel):
             continue
         entries.append((rel, f.read_bytes()))
+    for arc, data in (extra_files or {}).items():
+        entries.append((arc, data))
     entries.append((f'{dist_info}/METADATA', metadata.encode()))
     entries.append((f'{dist_info}/WHEEL',
                     b'Wheel-Version: 1.0\nGenerator: nicegui-pyodide-build\nRoot-Is-Purelib: true\nTag: py3-none-any\n'))
@@ -264,8 +272,16 @@ def build_wheels(out: Path) -> tuple[str, str]:
     version = nicegui.__version__
     nicegui_wheel = f'nicegui-{version}-py3-none-any.whl'
     print('Building stripped nicegui wheel...')
+    # ESM-package elements (leaflet/xterm/scene/echart/…) stat their ``dist/`` directory at
+    # import time (dependencies.setup_esm_package -> dist.stat().st_mtime). _keep_nicegui strips
+    # the (heavy) dist contents — served instead from ./esm/ — so ship an empty marker per dist/
+    # dir to keep the directory present; without it a plain ``ui.leaflet()`` crashes the app.
+    esm_keeps = {
+        f'nicegui/{d.relative_to(pkg).as_posix()}/.nicegui-pyodide-keep': b''
+        for d in pkg.glob('elements/*/dist') if d.is_dir()
+    }
     _build_wheel_from_dir(pkg, 'nicegui', 'nicegui', version, metadata, {}, _keep_nicegui,
-                          out / nicegui_wheel)
+                          out / nicegui_wheel, extra_files=esm_keeps)
 
     print('Building nicegui_pyodide wheel...')
     self_pkg = PKG_DIR
