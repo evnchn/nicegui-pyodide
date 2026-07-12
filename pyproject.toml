@@ -26,6 +26,7 @@ include = ["nicegui_pyodide*"]
 
 [tool.setuptools.package-data]
 nicegui_pyodide = [
+    "py.typed",
     "static/*.js",
     "static/component_overrides/*.js",
     "templates/*",
