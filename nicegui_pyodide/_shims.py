@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import importlib.abc
 import importlib.machinery
+import logging
 import sys
 import types
 from typing import Optional, Sequence
@@ -222,8 +223,12 @@ def _real_importable(name: str) -> bool:
     try:
         importlib.import_module(name)
         return True
-    except Exception:  # pylint: disable=broad-except  # ImportError and any exec-time error mean "not usable"
+    except (ModuleNotFoundError, ImportError):
         return False
+    except Exception:  # pylint: disable=broad-except  # present but broken at exec time — don't mask it with a stub
+        logging.getLogger(__name__).exception(
+            'nicegui_pyodide: %r is present but failed to import; leaving it real (not stubbing)', name)
+        return True
 
 
 def install(*, force: bool = False) -> None:

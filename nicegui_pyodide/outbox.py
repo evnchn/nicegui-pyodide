@@ -22,6 +22,15 @@ class PyodideOutbox(Outbox):
     whenever updates or messages are enqueued.  This ensures that out-of-band
     changes (background tasks, timers, ``await run_javascript``) reach the
     JavaScript frontend without an explicit ``flush()`` call.
+
+    Inherited-``_emit`` contract (fragile coupling to stock internals):
+    We override ``__init__``/``flush`` but deliberately INHERIT stock ``Outbox._emit``.
+    That means our ``__init__`` must keep providing every instance attribute ``_emit``
+    reads (``message_history``, ``next_message_id``), and stock ``_emit`` keeps reaching
+    into ``core.sio.eio.ping_interval``/``ping_timeout``, ``core.sio.emit``, ``core.air``
+    (``is_air_target``/``emit``), ``core.app.config.message_history_length`` and
+    ``client.page.resolve_reconnect_timeout()``.  If any of these drift in a future
+    NiceGUI release the failure is silent — ``tests/test_contract.py`` pins them red.
     """
 
     def __init__(self, client: Client) -> None:  # pylint: disable=super-init-not-called
