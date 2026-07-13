@@ -28,7 +28,7 @@ jobs:
       - name: Install Chromium for Playwright
         run: playwright install --with-deps chromium
       - name: Run browser smoke test  (builds the demo itself)
-        run: pytest -q tests/test_browser.py
+        run: pytest -q tests/test_browser.py tests/test_contract.py
       - name: Oracle self-test — smoke test MUST fail on a deliberately broken build
         env:
           NICEGUI_PYODIDE_TEST_BREAK: '1'

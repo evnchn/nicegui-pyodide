@@ -50,6 +50,9 @@ VENDOR_FILES = [
 # The shipped static/nicegui.js is patched from this exact NiceGUI release. Building
 # against a different patch release risks a client/JS protocol mismatch → warn loudly.
 TESTED_NICEGUI = '3.14.0'
+# The whole dependency pin the warning below must cover: any version in this range other
+# than TESTED_NICEGUI ships JS that was never regenerated for it.
+SUPPORTED_NICEGUI = 'nicegui>=3.14,<3.15'
 
 
 def _nicegui_meta():
@@ -75,9 +78,11 @@ def _nicegui_meta():
             sys.exit('Could not locate nicegui distribution metadata.')
         metadata = (cands[-1] / 'METADATA').read_text(encoding='utf-8')
     if nicegui.__version__ != TESTED_NICEGUI:
-        print(f'  WARNING: installed nicegui {nicegui.__version__} != tested {TESTED_NICEGUI}. '
-              f'The bundled patched nicegui.js/markdown.js target {TESTED_NICEGUI}; '
-              f'the frontend protocol may have drifted. Regenerate the JS if the demo misbehaves.')
+        print(f'  WARNING: installed nicegui {nicegui.__version__} != tested {TESTED_NICEGUI} '
+              f'(pin {SUPPORTED_NICEGUI}). The bundled patched nicegui.js/markdown.js target '
+              f'{TESTED_NICEGUI}; the frontend protocol may have drifted anywhere across the pin. '
+              f'Regenerate with scripts/regenerate_patched_js.py — see CONTRIBUTING.md, '
+              f'"Supporting a new NiceGUI release".')
     return nicegui, pkg, metadata
 
 
