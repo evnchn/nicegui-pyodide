@@ -49,7 +49,7 @@ exactly as usual — so shared code can import it unconditionally.
 ## Usage
 
 ```bash
-pip install git+https://github.com/evnchn/nicegui-pyodide  # pulls in a compatible nicegui; PyPI package coming soon
+pip install nicegui-pyodide            # pulls in a compatible nicegui
 nicegui-pyodide-build ./dist           # assemble a servable demo dir
 python -m http.server -d ./dist 8080   # open http://localhost:8080
 ```
