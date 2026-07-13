@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "nicegui-pyodide"
 version = "0.1.0"
 description = "Run NiceGUI entirely in the browser via Pyodide/PyScript — no server — as an external extension to stock NiceGUI (no fork, no core patches)."
+readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.8"
 authors = [{ name = "evnchn" }]
@@ -29,5 +30,6 @@ nicegui_pyodide = [
     "py.typed",
     "static/*.js",
     "static/component_overrides/*.js",
+    "static/component_overrides/*/*.js",
     "templates/*",
 ]
