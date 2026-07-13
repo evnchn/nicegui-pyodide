@@ -49,7 +49,7 @@ exactly as usual — so shared code can import it unconditionally.
 ## Usage
 
 ```bash
-pip install nicegui-pyodide            # pulls in a compatible nicegui
+pip install git+https://github.com/evnchn/nicegui-pyodide  # pulls in a compatible nicegui; PyPI package coming soon
 nicegui-pyodide-build ./dist           # assemble a servable demo dir
 python -m http.server -d ./dist 8080   # open http://localhost:8080
 ```
@@ -67,6 +67,28 @@ with Client(page('/')) as client:
 # the generated entrypoint mounts `client` via PyodideRuntime
 ```
 
+## Element support matrix
+
+Most NiceGUI elements are pure client-side Vue and work unchanged. A handful assume a
+live server (a socket.io connection or a component static route) and therefore need
+special handling in the browser. Status against the pinned NiceGUI release:
+
+| Element | Status | Notes |
+| --- | --- | --- |
+| labels, buttons, inputs, layout, tables, most Quasar wrappers | ✅ works | pure client-side; no server assumption |
+| `ui.markdown` (incl. Mermaid, code highlighting) | ✅ works (override) | codehilite CSS served from `./dynamic_resources/` instead of a server route |
+| `ui.scene` / `ui.scene_view` (3D / WebGL) | ✅ works (shim) | the `init` handshake polled `window.socket.id`; a minimal `window.socket` stand-in is provided in Pyodide mode. Browser-verified (WebGL canvas renders) |
+| `ui.leaflet` (map) | ✅ works (override) | same `init` shim, plus CSS/JS (`leaflet`, optional `leaflet-draw`) resolved from `./esm/nicegui-leaflet/`. Browser-verified (map + tiles render) |
+| `ui.xterm` (terminal) | ✅ works (override) | `xterm.css` resolved from `./esm/nicegui-xterm/` instead of a server route. Browser-verified (terminal renders) |
+| `ui.echart` with a `theme` **URL** string | ⚠️ partial | inline theme objects work; a theme passed as a URL `fetch()`es a server path — it fails soft (theme just doesn't apply). Use an inline theme object |
+| `ui.image` / `ui.interactive_image` / `ui.video` / `ui.audio` / `ui.link` with a **root-relative** `src`/`href` (e.g. `/foo.png`) | ⚠️ partial | such paths were `app.add_static_files` / uploaded-file routes with no backend here. Use absolute URLs, `data:`/`blob:` URIs, or bundle the asset. External URLs are unaffected |
+| `@ui.page` server routes, `app.add_static_files`, HTTP endpoints, native mode, multiprocessing | ❌ unsupported | require a real backend; no-op or unavailable in the browser (use the `Client(page(...))` pattern shown above) |
+
+The overridden/shimmed elements (`scene`, `leaflet`, `xterm`) are the socket.io/handshake
+and static-route cases that would otherwise fail with an opaque `TypeError` (`window.socket` is
+`undefined`) or a silent missing-stylesheet; all three are covered by the browser smoke test.
+Genuinely server-bound features (last row) are documented as unsupported rather than patched.
+
 ## Version pinning
 
 `nicegui_pyodide/static/nicegui.js` is a pyodide-patched copy of a specific
@@ -77,8 +99,10 @@ against that release and widen the pin.
 ## Status / limitations
 
 - Verified in-browser (Chromium via Playwright): render, button click →
-  handler → DOM update, `ui.notify`, and input round-trip through the bridge.
-- File upload uses a base64 bridge path (`runtime._handle_upload`).
+  handler → DOM update, `ui.notify`, input round-trip through the bridge,
+  `ui.upload` round-trip, `on_connect` handlers, and `app.storage.tab`.
+- File upload works client-side: files are read in the browser (`FileReader` →
+  base64) and delivered over the bridge to `runtime._handle_upload` (no server route).
 - `@ui.page` server routes are not available (there is no server); use the
   `Client(page(...))` pattern shown above.
 - Anything needing a real backend (HTTP endpoints, `app.add_static_files`,
@@ -88,9 +112,10 @@ against that release and widen the pin.
 
 This project is MIT-licensed (see [`LICENSE`](LICENSE)), Copyright (c) 2026 evnchn.
 
-It **bundles modified copies** of two files from [NiceGUI](https://github.com/zauberzeug/nicegui)
-(MIT, © Zauberzeug GmbH): `nicegui_pyodide/static/nicegui.js` and
-`nicegui_pyodide/static/component_overrides/markdown.js`. See [`NOTICE`](NOTICE) for details.
+It **bundles modified copies** of a few files from [NiceGUI](https://github.com/zauberzeug/nicegui)
+(MIT, © Zauberzeug GmbH): `nicegui_pyodide/static/nicegui.js` and the component overrides under
+`nicegui_pyodide/static/component_overrides/` (`markdown.js`, `leaflet/leaflet.js`, `xterm/xterm.js`).
+See [`NOTICE`](NOTICE) for details.
 Other vendor assets (Quasar, Vue, Tailwind, …) are copied from your own installed NiceGUI at
 build time and are **not** redistributed in this repository.
 

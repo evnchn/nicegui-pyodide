@@ -483,6 +483,9 @@ function createApp(elements, options) {
         // Pyodide mode: no socket.io, use bridge for message handling
         window.clientId = options.query?.client_id || "pyodide";
         window.did_handshake = true;
+        // scene/scene_view/leaflet gate their "init" handshake on window.socket.id being
+        // defined; there is no socket.io client here, so provide a minimal stand-in.
+        window.socket = { id: window.clientId };
 
         // Add component loading to message handlers for dynamic updates after mount
         messageHandlers.load_js_components = async (msg) => {

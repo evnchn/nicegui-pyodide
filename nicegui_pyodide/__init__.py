@@ -11,7 +11,7 @@ Browser entrypoint pattern::
     from nicegui import Client, ui
     from nicegui_pyodide import page, PyodideRuntime
 
-    with Client(page('')) as client:
+    with Client(page('/')) as client:
         ui.label('Hello from Pyodide!')
 
     runtime = PyodideRuntime(client)
@@ -22,6 +22,8 @@ usual — so shared code can import it unconditionally.
 """
 from __future__ import annotations
 
+import os
+
 from ._compat import IS_PYODIDE
 
 # Install the import weave BEFORE anything imports nicegui.  Everything that
@@ -29,7 +31,7 @@ from ._compat import IS_PYODIDE
 # can never run ahead of install().
 if IS_PYODIDE:
     from . import _shims
-    _shims.install(force=__import__('os').environ.get('NICEGUI_PYODIDE_FORCE') == '1')
+    _shims.install(force=os.environ.get('NICEGUI_PYODIDE_FORCE') == '1')
 
 __version__ = '0.1.0'
 __all__ = ['IS_PYODIDE', 'PyodideRuntime', 'page', 'install']

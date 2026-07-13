@@ -1,0 +1,16 @@
+--- a/xterm.js
++++ b/xterm.js
+@@ -18,7 +18,12 @@
+       });
+ 
+     // wait for window.path_prefix to be set
+-    this.$nextTick().then(() => loadResource(window.path_prefix + `${this.resourcePath}/xterm.css`));
++    this.$nextTick().then(() => {
++      const resourceUrl = window.niceguiBridge
++        ? "./esm/nicegui-xterm/xterm.css"
++        : window.path_prefix + `${this.resourcePath}/xterm.css`;
++      loadResource(resourceUrl);
++    });
+   },
+   methods: {
+     getRows() {
