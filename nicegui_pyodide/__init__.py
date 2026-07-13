@@ -33,7 +33,7 @@ if IS_PYODIDE:
     from . import _shims
     _shims.install(force=os.environ.get('NICEGUI_PYODIDE_FORCE') == '1')
 
-__version__ = '0.1.0'
+__version__ = '0.1.1'
 __all__ = ['IS_PYODIDE', 'PyodideRuntime', 'page', 'install']
 
 

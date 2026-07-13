@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import importlib.abc
 import importlib.machinery
+import importlib.util
 import logging
 import sys
 import types
@@ -212,6 +213,76 @@ def _make_nicegui_nicegui_shim() -> types.ModuleType:
     return mod
 
 
+# ui.run()/ui.run_with() start a web server, which has no meaning under Pyodide;
+# without a guard they die deep in shimmed uvicorn with a cryptic SystemExit
+# ("pass the application as an import string").  Map each entry point to its module.
+_RUN_GUARD_TARGETS = {'nicegui.ui_run': 'run', 'nicegui.ui_run_with': 'run_with'}
+
+_NO_SERVER_MSG = (
+    "ui.{func}() starts a web server, which does not exist under Pyodide "
+    "(nicegui-pyodide runs entirely in the browser). Build the UI inside a "
+    "Client(page(...)) context instead — the generated entrypoint mounts it:\n\n"
+    "    import nicegui_pyodide            # before `import nicegui`\n"
+    "    from nicegui import Client, ui\n"
+    "    from nicegui_pyodide import page\n\n"
+    "    with Client(page('/')) as client:\n"
+    "        ui.label('Hello from the browser!')\n\n"
+    "See https://github.com/evnchn/nicegui-pyodide#usage"
+)
+
+
+class _RunGuardFinder(importlib.abc.MetaPathFinder):
+    """Replace ``ui.run``/``ui.run_with`` with a friendly Pyodide error.
+
+    Patches the attribute the moment its module is first executed — before
+    ``nicegui.ui`` binds the name via ``from .ui_run import run`` — by wrapping the
+    real loader's ``exec_module``.  The rest of the module is left untouched.
+    """
+
+    def __init__(self) -> None:
+        self._resolving: set = set()
+
+    def find_spec(self, fullname: str, path: Optional[Sequence[str]] = None,
+                  target: Optional[types.ModuleType] = None) -> Optional[importlib.machinery.ModuleSpec]:
+        # `nicegui.ui` lazy-imports `run`/`run_with` on first access (PEP 562), so this
+        # may fire long after import; the transient per-fullname set (not a permanent one)
+        # guards only the re-entry from our own find_spec below — a permanent set would
+        # poison the real deferred load, and a shared flag could let the *other* target
+        # slip through unguarded if the two ever interleaved.
+        if fullname not in _RUN_GUARD_TARGETS or fullname in self._resolving:
+            return None
+        self._resolving.add(fullname)
+        try:
+            spec = importlib.util.find_spec(fullname)
+        finally:
+            self._resolving.discard(fullname)
+        if spec is None or spec.loader is None:
+            return None
+        attr = _RUN_GUARD_TARGETS[fullname]
+        orig_exec = spec.loader.exec_module
+
+        def exec_module(module: types.ModuleType, _orig=orig_exec, _attr=attr) -> None:
+            try:
+                _orig(module)
+            except Exception as exc:  # pylint: disable=broad-except
+                # The real body is server-oriented and may not import under the shims
+                # (e.g. ui_run_with pulls names off the seeded nicegui.nicegui). We only
+                # need the guard installed — the entry point is the sole public symbol —
+                # but log it so a *genuine* upstream break isn't silently masked.
+                logging.getLogger(__name__).debug(
+                    'nicegui_pyodide: %s body did not import under the shims (%s: %s); '
+                    'installing the run-guard anyway.', module.__name__, type(exc).__name__, exc)
+
+            def _guard(*args, **kwargs):
+                raise RuntimeError(_NO_SERVER_MSG.format(func=_attr))
+
+            _guard.__name__ = _attr
+            setattr(module, _attr, _guard)
+
+        spec.loader.exec_module = exec_module  # type: ignore[method-assign]
+        return spec
+
+
 def _real_importable(name: str) -> bool:
     """True if ``name`` can genuinely be imported in this interpreter.
 
@@ -274,5 +345,9 @@ def install(*, force: bool = False) -> None:
 
     # 2. lazy nicegui.nicegui seed (skips the FastAPI/socket.io bootstrap)
     sys.modules.setdefault('nicegui.nicegui', _make_nicegui_nicegui_shim())
+
+    # 3. friendly guard so ui.run()/ui.run_with() explain the browser has no server
+    if not any(isinstance(f, _RunGuardFinder) for f in sys.meta_path):
+        sys.meta_path.insert(0, _RunGuardFinder())
 
     _installed = True

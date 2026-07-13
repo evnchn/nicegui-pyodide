@@ -302,34 +302,63 @@ def build_wheels(out: Path) -> tuple[str, str]:
 
 # -------------------------------------------------------------------------- templates
 
-def copy_templates(out: Path, nicegui_wheel: str, self_wheel: str) -> None:
-    for name in ('index.html', 'pyscript.toml', 'app.py'):
+def copy_templates(out: Path, nicegui_wheel: str, self_wheel: str, *, force_app: bool = False) -> None:
+    for name in ('index.html', 'pyscript.toml'):
         shutil.copy2(TEMPLATES_DIR / name, out / name)
     entry = (TEMPLATES_DIR / 'entrypoint.py').read_text()
     entry = entry.replace('{{NICEGUI_WHEEL}}', nicegui_wheel).replace('{{PYODIDE_WHEEL}}', self_wheel)
     (out / 'entrypoint.py').write_text(entry)
-    print('Copied templates (index.html, entrypoint.py, pyscript.toml, app.py)')
+    print('Copied generated files (index.html, entrypoint.py, pyscript.toml)')
+
+    # app.py is YOUR code — a rebuild refreshes the generated infra above, it must not
+    # silently reset your app. Only write the starter template when absent (or --force).
+    app_dst = out / 'app.py'
+    if app_dst.exists() and not force_app:
+        print('Kept existing app.py (use --force to overwrite it with the starter template)')
+    else:
+        shutil.copy2(TEMPLATES_DIR / 'app.py', app_dst)
+        print('Wrote app.py (starter template — edit this to build your UI)')
 
 
 # ------------------------------------------------------------------------------- main
 
-def build(output_dir: str = 'pyodide-dist') -> Path:
+def build(output_dir: str = 'pyodide-dist', *, force_app: bool = False) -> Path:
     out = Path(output_dir).resolve()
     out.mkdir(parents=True, exist_ok=True)
     print(f'Building nicegui-pyodide demo into {out}\n')
     nicegui_wheel, self_wheel = build_wheels(out)     # first: real wheel names feed the entrypoint
-    copy_templates(out, nicegui_wheel, self_wheel)    # index.html must exist before importmap injection
+    copy_templates(out, nicegui_wheel, self_wheel, force_app=force_app)  # index.html before importmap injection
     prepare_static_files(out)
     prepare_components(out)                            # injects the import map into index.html
     prepare_dynamic_resources(out)
-    print(f'\nReady. Serve with:\n  python -m http.server -d {out} 8080')
+    print(f'\nReady. Serve with:\n  python -m http.server -d {out} 8080\n  (or re-run with --serve)')
     return out
+
+
+def serve(directory: Path, port: int = 8080) -> None:
+    """Serve ``directory`` over HTTP until interrupted (what ``--serve`` runs)."""
+    import functools  # pylint: disable=import-outside-toplevel
+    import http.server  # pylint: disable=import-outside-toplevel
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(directory))
+    with http.server.ThreadingHTTPServer(('', port), handler) as httpd:
+        print(f'\nServing {directory} at http://localhost:{port}  (Ctrl-C to stop)')
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            print('\nStopped.')
 
 
 def main() -> None:
     p = argparse.ArgumentParser(description='Assemble a Pyodide demo dir for stock NiceGUI.')
     p.add_argument('output_dir', nargs='?', default='pyodide-dist', help='output directory')
-    build(p.parse_args().output_dir)
+    p.add_argument('--force', action='store_true',
+                   help='overwrite an existing app.py with the starter template')
+    p.add_argument('--serve', action='store_true', help='serve the output dir over HTTP after building')
+    p.add_argument('--port', type=int, default=8080, help='port for --serve (default: 8080)')
+    args = p.parse_args()
+    out = build(args.output_dir, force_app=args.force)
+    if args.serve:
+        serve(out, args.port)
 
 
 if __name__ == '__main__':
