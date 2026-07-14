@@ -50,11 +50,17 @@ exactly as usual — so shared code can import it unconditionally.
 
 ```bash
 pip install nicegui-pyodide            # pulls in a compatible nicegui
-nicegui-pyodide-build ./dist           # assemble a servable demo dir
-python -m http.server -d ./dist 8080   # open http://localhost:8080
+nicegui-pyodide-build ./dist --serve   # build + serve → http://localhost:8080
 ```
 
-Edit `dist/app.py` to change the UI. The app-building pattern:
+`--serve` builds *and* serves in one step; without it, `nicegui-pyodide-build ./dist`
+just assembles the dir and you serve it however you like
+(`python -m http.server -d ./dist 8080`).
+
+Edit `dist/app.py` to change the UI, then reload the page. Re-running
+`nicegui-pyodide-build ./dist` refreshes the generated files but **keeps your
+`app.py`** (pass `--force` to reset it to the starter template). The app-building
+pattern:
 
 ```python
 import nicegui_pyodide                 # MUST come before `import nicegui`
@@ -66,6 +72,26 @@ with Client(page('/')) as client:
     ui.button('Click me', on_click=lambda: ui.notify('Clicked!'))
 # the generated entrypoint mounts `client` via PyodideRuntime
 ```
+
+## For coding agents / LLMs
+
+This package uses a **different idiom** from server-mode NiceGUI. If you know NiceGUI,
+these are the things you'll get wrong on the first try:
+
+- **Build the UI in a `with Client(page('/')) as client:` block — do *not* call `ui.run()`
+  or `ui.run_with()`.** There is no server to start; both raise a `RuntimeError` telling
+  you this. `@ui.page` server routes don't exist either.
+- **`import nicegui_pyodide` MUST come before `import nicegui`** (it installs the import
+  shims). Keep the `# noqa: F401` on it so linters don't "helpfully" delete the line, and
+  don't let an import-sorter move it below `import nicegui`. Getting this wrong raises a
+  clear `RuntimeError` rather than failing silently.
+- **The workflow is build-a-static-bundle, not `python app.py`:**
+  `nicegui-pyodide-build ./dist --serve`, then edit `dist/app.py` and reload.
+- **No backend features:** `app.add_static_files`, HTTP endpoints, native/multiprocessing
+  modes are unavailable. Root-relative asset paths (`/foo.png`) won't resolve — use
+  absolute URLs or `data:`/`blob:` URIs. See the support matrix below.
+
+A copy of these rules also lives in [`AGENTS.md`](AGENTS.md).
 
 ## Element support matrix
 

@@ -4,11 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nicegui-pyodide"
-version = "0.1.0"
+version = "0.1.1"
 description = "Run NiceGUI entirely in the browser via Pyodide/PyScript — no server — as an external extension to stock NiceGUI (no fork, no core patches)."
 readme = "README.md"
 license = { text = "MIT" }
-requires-python = ">=3.8"
+# NiceGUI 3.14 requires >=3.10; a looser floor only yields a confusing resolver error.
+requires-python = ">=3.10"
 authors = [{ name = "evnchn" }]
 keywords = ["nicegui", "pyodide", "pyscript", "wasm", "browser", "webassembly"]
 # Pinned to a nicegui range: the shipped static/nicegui.js is a pyodide-patched
