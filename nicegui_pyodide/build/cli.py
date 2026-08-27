@@ -43,6 +43,10 @@ VENDOR_FILES = [
     'vue.esm-browser.prod.js',
 ]
 
+# Pure-Python runtime deps micropip pulls from PyPI at page load. ``--self-hosted``
+# replaces this with local wheel paths (see build/vendor.py).
+DEFAULT_INSTALL_ARGS = "['typing-extensions', 'markdown2', 'Pygments', 'docutils', 'tinycss2']"
+
 # Wheel filenames are computed from the real package versions at build time
 # (PEP 427 requires ``{name}-{version}-py3-none-any.whl``; micropip parses the
 # version from the filename, so it must be a valid PEP 440 version).
@@ -302,11 +306,27 @@ def build_wheels(out: Path) -> tuple[str, str]:
 
 # -------------------------------------------------------------------------- templates
 
-def copy_templates(out: Path, nicegui_wheel: str, self_wheel: str, *, force_app: bool = False) -> None:
-    for name in ('index.html', 'pyscript.toml'):
-        shutil.copy2(TEMPLATES_DIR / name, out / name)
+def copy_templates(out: Path, nicegui_wheel: str, self_wheel: str, *,
+                   force_app: bool = False, self_hosted: bool = False) -> None:
+    html = (TEMPLATES_DIR / 'index.html').read_text()
+    toml = (TEMPLATES_DIR / 'pyscript.toml').read_text()
+    install_args = DEFAULT_INSTALL_ARGS
+    if self_hosted:
+        from .vendor import vendor  # pylint: disable=import-outside-toplevel
+        subs = vendor(out, html)
+        cdn = f'<script type="module" src="https://pyscript.net/releases/{subs["pyscript_release"]}/core.js">'
+        if cdn not in html:
+            sys.exit('Could not find the PyScript <script> tag to redirect to the vendored copy.')
+        # ``offline`` is what switches PyScript to the local ./pyscript/<type>/<type>.mjs
+        # interpreter; without it PyScript still reaches for the jsDelivr CDN.
+        html = html.replace(cdn, f'<script type="module" offline src="{subs["core_js"]}">')
+        install_args = subs['install_args']
+    (out / 'index.html').write_text(html)
+    (out / 'pyscript.toml').write_text(toml)
     entry = (TEMPLATES_DIR / 'entrypoint.py').read_text()
-    entry = entry.replace('{{NICEGUI_WHEEL}}', nicegui_wheel).replace('{{PYODIDE_WHEEL}}', self_wheel)
+    entry = (entry.replace('{{NICEGUI_WHEEL}}', nicegui_wheel)
+                  .replace('{{PYODIDE_WHEEL}}', self_wheel)
+                  .replace('{{PYPI_INSTALL_ARGS}}', install_args))
     (out / 'entrypoint.py').write_text(entry)
     print('Copied generated files (index.html, entrypoint.py, pyscript.toml)')
 
@@ -322,12 +342,14 @@ def copy_templates(out: Path, nicegui_wheel: str, self_wheel: str, *, force_app:
 
 # ------------------------------------------------------------------------------- main
 
-def build(output_dir: str = 'pyodide-dist', *, force_app: bool = False) -> Path:
+def build(output_dir: str = 'pyodide-dist', *, force_app: bool = False,
+          self_hosted: bool = False) -> Path:
     out = Path(output_dir).resolve()
     out.mkdir(parents=True, exist_ok=True)
     print(f'Building nicegui-pyodide demo into {out}\n')
     nicegui_wheel, self_wheel = build_wheels(out)     # first: real wheel names feed the entrypoint
-    copy_templates(out, nicegui_wheel, self_wheel, force_app=force_app)  # index.html before importmap injection
+    copy_templates(out, nicegui_wheel, self_wheel, force_app=force_app,
+                   self_hosted=self_hosted)  # index.html before importmap injection
     prepare_static_files(out)
     prepare_components(out)                            # injects the import map into index.html
     prepare_dynamic_resources(out)
@@ -353,10 +375,13 @@ def main() -> None:
     p.add_argument('output_dir', nargs='?', default='pyodide-dist', help='output directory')
     p.add_argument('--force', action='store_true',
                    help='overwrite an existing app.py with the starter template')
+    p.add_argument('--self-hosted', action='store_true',
+                   help='vendor PyScript, Pyodide and the PyPI wheels into the output dir so the '
+                        'demo loads with no network access (offline / air-gapped / CDN outage)')
     p.add_argument('--serve', action='store_true', help='serve the output dir over HTTP after building')
     p.add_argument('--port', type=int, default=8080, help='port for --serve (default: 8080)')
     args = p.parse_args()
-    out = build(args.output_dir, force_app=args.force)
+    out = build(args.output_dir, force_app=args.force, self_hosted=args.self_hosted)
     if args.serve:
         serve(out, args.port)
 

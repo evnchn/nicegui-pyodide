@@ -29,6 +29,8 @@ jobs:
         run: playwright install --with-deps chromium
       - name: Run browser smoke test  (builds the demo itself)
         run: pytest -q tests/test_browser.py tests/test_contract.py
+      - name: Air-gap test — --self-hosted build boots with the network cut
+        run: pytest -q tests/test_offline.py
       - name: Oracle self-test — smoke test MUST fail on a deliberately broken build
         env:
           NICEGUI_PYODIDE_TEST_BREAK: '1'
