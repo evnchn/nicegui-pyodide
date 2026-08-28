@@ -31,3 +31,12 @@ At build time (`nicegui-pyodide-build`), additional unmodified vendor assets
 (Quasar, Vue, Tailwind, fonts, CSS, element component JS) are copied out of the
 user's own installed NiceGUI into the output directory. Those assets are NOT
 distributed in this repository; they retain their respective upstream licenses.
+
+Building with `nicegui-pyodide-build --self-hosted` additionally downloads unmodified
+copies of PyScript (https://pyscript.net, Apache-2.0), the Pyodide runtime
+(https://pyodide.org, MPL-2.0) and a small set of pure-Python wheels from PyPI into
+the output directory. Like the NiceGUI vendor assets above, these are NOT distributed
+in this repository and retain their respective upstream licenses; the generated
+`<outdir>/pyscript/MANIFEST.json` records exactly which files, versions and source
+URLs were mirrored. If you redistribute a built directory, you redistribute those
+components too and their license terms apply to you.

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import socket
 import threading
 from functools import partial
@@ -21,6 +22,7 @@ from pathlib import Path
 import pytest
 
 from nicegui_pyodide.build.cli import build
+from tests.test_browser import EXERCISE_APP
 
 BOOT_TIMEOUT = 240_000
 # The CDN build fails as soon as its first external request is aborted, so it needs
@@ -61,6 +63,15 @@ def _cut_the_network(page, base_url: str) -> list[str]:
 def offline_dist(tmp_path_factory):
     dist = tmp_path_factory.mktemp('dist-offline')
     build(str(dist), self_hosted=True)
+    return dist
+
+
+@pytest.fixture(scope='session')
+def exercise_dist(tmp_path_factory, offline_dist):
+    """The self-hosted build with the heavyweight exercise app (no second download)."""
+    dist = tmp_path_factory.mktemp('dist-exercise') / 'dist'
+    shutil.copytree(offline_dist, dist)
+    (dist / 'app.py').write_text(EXERCISE_APP)
     return dist
 
 
@@ -123,5 +134,37 @@ def test_cdn_build_cannot_boot_offline(page, cdn_dist):
         with pytest.raises(Exception):  # noqa: PT011,B017  - playwright TimeoutError
             page.wait_for_function('() => window.__pyodide_ready === true', timeout=NO_BOOT_TIMEOUT)
         assert escaped, 'no external request was blocked — the route filter matched nothing'
+    finally:
+        httpd.shutdown()
+
+
+def test_heavyweight_elements_work_offline(page, exercise_dist, tmp_path):
+    """leaflet/xterm/scene/upload pull lazily-loaded chunks the starter app never touches.
+
+    The one thing that legitimately still needs the network is the map *tiles* — that is
+    the app's own content, not the runtime, so it is asserted as such rather than ignored.
+    """
+    httpd, base_url = _serve(exercise_dist)
+    try:
+        escaped = _cut_the_network(page, base_url)
+        errors: list[str] = []
+        page.on('pageerror', lambda e: errors.append(str(e)))
+
+        page.goto(f'{base_url}/index.html', wait_until='domcontentloaded')
+        page.wait_for_function('() => window.__pyodide_ready === true', timeout=BOOT_TIMEOUT)
+
+        page.wait_for_selector('#app .leaflet-container', timeout=20_000)
+        page.wait_for_selector('#app .xterm', timeout=20_000)
+        page.wait_for_selector('#app canvas', timeout=20_000)
+
+        payload = tmp_path / 'payload.txt'
+        payload.write_bytes(b'hello-upload-payload')  # 20 bytes
+        page.locator('#app input[type="file"]').first.set_input_files(str(payload))
+        page.wait_for_function(
+            "() => document.body.innerText.includes('upload: payload.txt 20b')", timeout=15_000)
+
+        runtime_escapes = [u for u in escaped if '.tile.' not in u and '/tile' not in u]
+        assert not runtime_escapes, 'a runtime asset was not vendored: ' + ', '.join(runtime_escapes)
+        assert not errors, 'page errors while offline:\n' + '\n'.join(errors)
     finally:
         httpd.shutdown()
