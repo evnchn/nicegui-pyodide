@@ -170,3 +170,13 @@ def test_heavyweight_elements_work_offline(page, exercise_dist, tmp_path):
         assert not errors, 'page errors while offline:\n' + '\n'.join(errors)
     finally:
         httpd.shutdown()
+
+
+def test_refuses_to_overwrite_a_foreign_pyscript_dir(tmp_path):
+    """`build .` must not eat a user's own pyscript/ directory."""
+    theirs = tmp_path / 'pyscript'
+    theirs.mkdir()
+    (theirs / 'mine.txt').write_text('user data')
+    with pytest.raises(SystemExit):
+        build(str(tmp_path), self_hosted=True)
+    assert (theirs / 'mine.txt').read_text() == 'user data'

@@ -23,6 +23,7 @@ import hashlib
 import json
 import re
 import shutil
+import sys
 import urllib.request
 from pathlib import Path
 
@@ -173,9 +174,15 @@ def vendor(out: Path, html: str) -> dict:
     """
     release = pyscript_release(html)
     root = out / 'pyscript'          # path fixed by PyScript's offline mode (see module docstring)
-    # This tree is ours alone; wipe it so a release bump or a half-finished run cannot
-    # leave stale chunks behind that the manifest no longer describes.
-    shutil.rmtree(root, ignore_errors=True)
+    # Wipe our own tree so a release bump or a half-finished run cannot leave stale
+    # chunks the manifest no longer describes — but only once it is provably ours.
+    # `build .` into a directory that already has an unrelated pyscript/ must not eat it.
+    if root.exists():
+        if not (root / 'MANIFEST.json').is_file():
+            sys.exit(f'{root} exists and was not written by --self-hosted '
+                     f'(no MANIFEST.json). Refusing to overwrite it; move it aside or '
+                     f'build into a different output directory.')
+        shutil.rmtree(root)
     man = _Manifest(root)
     print(f'Vendoring runtime for offline use (PyScript {release})...')
     _mirror_pyscript(f'https://pyscript.net/releases/{release}/', root, man)
