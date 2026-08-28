@@ -22,7 +22,9 @@ from pathlib import Path
 import pytest
 
 from nicegui_pyodide.build.cli import build
-from tests.test_browser import EXERCISE_APP
+# sibling module, not a package import: bare `pytest` does not put the repo root on
+# sys.path (only `python -m pytest` does), but it does prepend this file's directory.
+from test_browser import EXERCISE_APP
 
 BOOT_TIMEOUT = 240_000
 # The CDN build fails as soon as its first external request is aborted, so it needs
