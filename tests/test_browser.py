@@ -58,6 +58,7 @@ with Client(page('/')) as client:
     ui.button('Greet', on_click=lambda: ui.notify(f'Hello, {name.value}!'))
 
     ui.markdown('This is **NiceGUI** via _Pyodide_.')
+    ui.restructured_text('This is *NiceGUI* via ``Pyodide``.')  # docutils + tinycss2
 
     conn = ui.label('connect: pending')
     store = ui.label('storage: pending')
