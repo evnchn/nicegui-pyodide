@@ -87,3 +87,23 @@ path stopped short — that is the signal to think, not to force. Read the rejec
 understand what upstream changed, and decide whether the pyodide branch still
 makes sense before hand-porting it. Then regenerate the stored diff (step 3) so
 the next release bump starts clean again.
+
+## Bumping the vendored browser runtime
+
+`--self-hosted` mirrors PyScript, Pyodide and a few PyPI wheels into the build
+(`nicegui_pyodide/build/vendor.py`). Two pins matter:
+
+* the **PyScript release** lives in `templates/index.html` — that single URL is the
+  source of truth, and the Pyodide version is read back out of the downloaded bundle,
+  so bumping PyScript is a one-line change;
+* the **PyPI wheel versions** are declared once in `vendor.RUNTIME_PACKAGES`
+  (top-level) and `vendor.RUNTIME_TRANSITIVE` (their dependencies), pinned so an
+  air-gapped build is reproducible. `cli.DEFAULT_INSTALL_ARGS` is derived from the
+  first, so the default-build list cannot drift from the vendored set; and because
+  `--self-hosted` installs with `deps=False`, `vendor._verify_closure` re-derives the
+  closure from the downloaded wheels' own `Requires-Dist` and fails the build if
+  `RUNTIME_TRANSITIVE` is short. Adding a package usually means editing one line.
+
+After either bump run `pytest -q tests/test_offline.py`; it builds with
+`--self-hosted`, blocks every non-localhost request in a real browser, and checks the
+demo still boots.

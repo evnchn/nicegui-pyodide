@@ -57,6 +57,33 @@ nicegui-pyodide-build ./dist --serve   # build + serve → http://localhost:8080
 just assembles the dir and you serve it however you like
 (`python -m http.server -d ./dist 8080`).
 
+### Offline / air-gapped builds
+
+By default the page still loads PyScript from `pyscript.net`, Pyodide from
+`cdn.jsdelivr.net` and a handful of pure-Python wheels from PyPI — so the
+"no server" demo is not yet a *no network* demo. `--self-hosted` mirrors all three
+into the output dir and rewrites the page to use them:
+
+```bash
+nicegui-pyodide-build ./dist --self-hosted
+```
+
+Adds ~15 MB to the build (Pyodide's `.wasm` is most of it) and one network round
+of downloads at build time; after that the dir loads with the network fully cut.
+`dist/pyscript/MANIFEST.json` records every mirrored file with its source URL,
+size and sha256, plus the exact PyScript release and Pyodide/Python versions
+the build was assembled from.
+
+There is nothing to configure: the PyScript release comes from the pinned
+`<script>` tag, and the Pyodide version is read back out of the PyScript bundle
+that was just downloaded, so a release bump needs no change here.
+
+Two mode differences worth knowing. A self-hosted build carries its PyScript config
+**inline in `index.html`** rather than as a `pyscript.toml`, because PyScript honours
+the `interpreter` key only in an inline config — an external toml setting it is
+silently ignored. And `ui.leaflet`'s default tile layer is remote content, so a map
+still needs the network (or your own local tiles) even though the runtime does not.
+
 Edit `dist/app.py` to change the UI, then reload the page. Re-running
 `nicegui-pyodide-build ./dist` refreshes the generated files but **keeps your
 `app.py`** (pass `--force` to reset it to the starter template). The app-building
@@ -122,8 +149,17 @@ NiceGUI release's `nicegui.js`. The `nicegui>=3.14,<3.15` pin in `pyproject.toml
 keeps them in lockstep. To support a newer NiceGUI, regenerate the patched JS
 against that release and widen the pin.
 
+The browser runtime is pinned in two more places: the PyScript release in
+`templates/index.html` (which in turn decides the Pyodide version), and the
+pure-Python wheel versions in `build/vendor.py`. Only `--self-hosted` builds
+freeze those; a default build takes whatever the CDNs serve.
+
 ## Status / limitations
 
+- Verified in-browser (Chromium via Playwright) with **every non-localhost request
+  aborted**: a `--self-hosted` build boots Pyodide, mounts NiceGUI and round-trips a
+  click with zero network access. The same test asserts a stock (CDN) build *cannot*
+  boot under that blocking, so the air-gap harness cannot go silently always-green.
 - Verified in-browser (Chromium via Playwright): render, button click →
   handler → DOM update, `ui.notify`, input round-trip through the bridge,
   `ui.upload` round-trip, `on_connect` handlers, and `app.storage.tab`.

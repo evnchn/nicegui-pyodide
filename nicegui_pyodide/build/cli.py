@@ -28,6 +28,8 @@ import zipfile
 from base64 import urlsafe_b64encode
 from pathlib import Path
 
+from . import vendor as vendor_pkgs                       # stdlib-only; safe to import eagerly
+
 PKG_DIR = Path(__file__).resolve().parent.parent          # nicegui_pyodide/
 TEMPLATES_DIR = PKG_DIR / 'templates'
 PATCHED_JS = PKG_DIR / 'static' / 'nicegui.js'
@@ -42,6 +44,16 @@ VENDOR_FILES = [
     'tailwindcss.min.js',
     'vue.esm-browser.prod.js',
 ]
+
+# Pure-Python runtime deps micropip pulls from PyPI at page load, derived from the one
+# declaration in build/vendor.py so the CDN list and the vendored wheel set cannot drift.
+# ``--self-hosted`` replaces this with local wheel paths.
+DEFAULT_INSTALL_ARGS = repr(list(vendor_pkgs.RUNTIME_PACKAGES))
+
+# The PyScript config, declared once. templates/pyscript.toml is the readable copy used
+# by default builds; a --self-hosted build serialises this same dict inline (the only
+# form in which PyScript honours `interpreter`). A test asserts the two agree.
+PYSCRIPT_CONFIG = {'packages': ['micropip'], 'files': {'./app.py': './app.py'}}
 
 # Wheel filenames are computed from the real package versions at build time
 # (PEP 427 requires ``{name}-{version}-py3-none-any.whl``; micropip parses the
@@ -302,13 +314,40 @@ def build_wheels(out: Path) -> tuple[str, str]:
 
 # -------------------------------------------------------------------------- templates
 
-def copy_templates(out: Path, nicegui_wheel: str, self_wheel: str, *, force_app: bool = False) -> None:
-    for name in ('index.html', 'pyscript.toml'):
-        shutil.copy2(TEMPLATES_DIR / name, out / name)
+def copy_templates(out: Path, nicegui_wheel: str, self_wheel: str, *,
+                   force_app: bool = False, self_hosted: bool = False) -> None:
+    html = (TEMPLATES_DIR / 'index.html').read_text()
+    install_args = DEFAULT_INSTALL_ARGS
+    if self_hosted:
+        subs = vendor_pkgs.vendor(out, html)
+        cdn = f'<script type="module" src="https://pyscript.net/releases/{subs["pyscript_release"]}/core.js">'
+        py_tag = '<script type="py" src="entrypoint.py" config="pyscript.toml">'
+        if cdn not in html or py_tag not in html:
+            sys.exit('Could not find the PyScript <script> tags to point at the vendored copies.')
+        # PyScript honours the documented `interpreter` config key only when the config is
+        # INLINE — pointing `config=` at a pyscript.toml that sets it is silently ignored
+        # (measured against 2026.2.1). So the config moves into the tag, and no dead
+        # pyscript.toml is written. The `offline` attribute is a belt-and-braces fallback:
+        # PyScript consults it only if `interpreter` is absent, and it resolves to the same
+        # ./pyscript/pyodide/pyodide.mjs path we already write.
+        config = dict(PYSCRIPT_CONFIG, interpreter=subs['interpreter'])
+        attr = json_mod.dumps(config).replace('&', '&amp;').replace("'", '&#39;')
+        html = html.replace(cdn, f'<script type="module" offline src="{subs["core_js"]}">')
+        html = html.replace(py_tag, f'<script type="py" src="entrypoint.py" config=\'{attr}\'>')
+        # rebuilding an existing default-mode dir as --self-hosted would otherwise leave a
+        # pyscript.toml that the inline config overrides — the dead-config trap again
+        (out / 'pyscript.toml').unlink(missing_ok=True)
+        install_args = subs['install_args']
+    else:
+        (out / 'pyscript.toml').write_text((TEMPLATES_DIR / 'pyscript.toml').read_text())
+    (out / 'index.html').write_text(html)
     entry = (TEMPLATES_DIR / 'entrypoint.py').read_text()
-    entry = entry.replace('{{NICEGUI_WHEEL}}', nicegui_wheel).replace('{{PYODIDE_WHEEL}}', self_wheel)
+    entry = (entry.replace('{{NICEGUI_WHEEL}}', nicegui_wheel)
+                  .replace('{{PYODIDE_WHEEL}}', self_wheel)
+                  .replace('{{PYPI_INSTALL_ARGS}}', install_args))
     (out / 'entrypoint.py').write_text(entry)
-    print('Copied generated files (index.html, entrypoint.py, pyscript.toml)')
+    print('Copied generated files (index.html, entrypoint.py'
+          + (', config inlined — see index.html)' if self_hosted else ', pyscript.toml)'))
 
     # app.py is YOUR code — a rebuild refreshes the generated infra above, it must not
     # silently reset your app. Only write the starter template when absent (or --force).
@@ -322,12 +361,14 @@ def copy_templates(out: Path, nicegui_wheel: str, self_wheel: str, *, force_app:
 
 # ------------------------------------------------------------------------------- main
 
-def build(output_dir: str = 'pyodide-dist', *, force_app: bool = False) -> Path:
+def build(output_dir: str = 'pyodide-dist', *, force_app: bool = False,
+          self_hosted: bool = False) -> Path:
     out = Path(output_dir).resolve()
     out.mkdir(parents=True, exist_ok=True)
     print(f'Building nicegui-pyodide demo into {out}\n')
     nicegui_wheel, self_wheel = build_wheels(out)     # first: real wheel names feed the entrypoint
-    copy_templates(out, nicegui_wheel, self_wheel, force_app=force_app)  # index.html before importmap injection
+    copy_templates(out, nicegui_wheel, self_wheel, force_app=force_app,
+                   self_hosted=self_hosted)  # index.html before importmap injection
     prepare_static_files(out)
     prepare_components(out)                            # injects the import map into index.html
     prepare_dynamic_resources(out)
@@ -353,10 +394,13 @@ def main() -> None:
     p.add_argument('output_dir', nargs='?', default='pyodide-dist', help='output directory')
     p.add_argument('--force', action='store_true',
                    help='overwrite an existing app.py with the starter template')
+    p.add_argument('--self-hosted', action='store_true',
+                   help='vendor PyScript, Pyodide and the PyPI wheels into the output dir so the '
+                        'demo loads with no network access (offline / air-gapped / CDN outage)')
     p.add_argument('--serve', action='store_true', help='serve the output dir over HTTP after building')
     p.add_argument('--port', type=int, default=8080, help='port for --serve (default: 8080)')
     args = p.parse_args()
-    out = build(args.output_dir, force_app=args.force)
+    out = build(args.output_dir, force_app=args.force, self_hosted=args.self_hosted)
     if args.serve:
         serve(out, args.port)
 

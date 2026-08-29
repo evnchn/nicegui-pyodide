@@ -12,7 +12,8 @@ await micropip.install('{{NICEGUI_WHEEL}}', deps=False)   # type: ignore  # noqa
 await micropip.install('{{PYODIDE_WHEEL}}', deps=False)   # type: ignore  # noqa: F704, PLE1142
 # tinycss2 (+ its dep webencodings) is imported eagerly by nicegui.vbuild during
 # `import nicegui`; the others back markdown/rst rendering. All are pure-Python.
-await micropip.install(['typing-extensions', 'markdown2', 'Pygments', 'docutils', 'tinycss2'])  # type: ignore  # noqa: F704, PLE1142
+# Names resolve against PyPI; a --self-hosted build substitutes local wheel paths.
+await micropip.install({{PYPI_INSTALL_ARGS}})  # type: ignore  # noqa: F704, PLE1142
 window.console.log('Python: packages installed')
 
 # app.py imports nicegui_pyodide FIRST (installs the shims), then builds the UI.
