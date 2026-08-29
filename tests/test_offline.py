@@ -212,3 +212,20 @@ def test_closure_check_catches_a_missing_transitive_dep(offline_dist, tmp_path):
             shutil.copy2(wheel, tmp_path / wheel.name)
     with pytest.raises(RuntimeError, match='webencodings'):
         vendor._verify_closure(tmp_path)
+
+
+@pytest.mark.parametrize(('marker', 'optional'), [
+    ('extra == "test"', True),                              # plain extras gate
+    ('python_version >= "3.8.1" and extra == "all"', True),  # markdown2 ships this one
+    ('python_version < "3.14" or extra == "foo"', False),    # reachable without the extra
+    ('extra != "x"', False),                                 # true when no extra is set
+    ('', False),                                             # unconditional requirement
+])
+def test_extras_marker_rule(marker, optional):
+    """The closure check skips extras — it must not skip a genuinely required dep."""
+    assert vendor._is_extras_only(marker) is optional
+
+
+def test_self_hosted_rebuild_removes_a_stale_pyscript_toml(offline_dist):
+    """A dir rebuilt from default mode must not keep a config the inline one overrides."""
+    assert not (offline_dist / 'pyscript.toml').exists()

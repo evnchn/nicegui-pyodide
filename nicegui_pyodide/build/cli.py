@@ -331,11 +331,12 @@ def copy_templates(out: Path, nicegui_wheel: str, self_wheel: str, *,
         # PyScript consults it only if `interpreter` is absent, and it resolves to the same
         # ./pyscript/pyodide/pyodide.mjs path we already write.
         config = dict(PYSCRIPT_CONFIG, interpreter=subs['interpreter'])
+        attr = json_mod.dumps(config).replace('&', '&amp;').replace("'", '&#39;')
         html = html.replace(cdn, f'<script type="module" offline src="{subs["core_js"]}">')
-        html = html.replace(
-            py_tag,
-            '<script type="py" src="entrypoint.py" '
-            f"config='{json_mod.dumps(config)}'>")
+        html = html.replace(py_tag, f'<script type="py" src="entrypoint.py" config=\'{attr}\'>')
+        # rebuilding an existing default-mode dir as --self-hosted would otherwise leave a
+        # pyscript.toml that the inline config overrides — the dead-config trap again
+        (out / 'pyscript.toml').unlink(missing_ok=True)
         install_args = subs['install_args']
     else:
         (out / 'pyscript.toml').write_text((TEMPLATES_DIR / 'pyscript.toml').read_text())

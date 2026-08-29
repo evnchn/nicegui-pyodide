@@ -52,7 +52,7 @@ RUNTIME_TRANSITIVE = {
 PYPI_WHEELS = {**RUNTIME_PACKAGES, **RUNTIME_TRANSITIVE}
 
 # Pyodide distribution files a bare interpreter needs, plus micropip itself
-# (``pyscript.toml`` asks for it, and Pyodide resolves it through the local lock).
+# (the generated config asks for it, and Pyodide resolves it through the local lock).
 PYODIDE_FILES = ['pyodide.mjs', 'pyodide.asm.js', 'pyodide.asm.wasm',
                  'python_stdlib.zip', 'pyodide-lock.json']
 PYODIDE_PACKAGES = ['micropip', 'packaging']
@@ -169,6 +169,22 @@ def _normalize(name: str) -> str:
     return re.sub(r'[-_.]+', '-', name).lower()
 
 
+def _is_extras_only(marker: str) -> bool:
+    """True if a requirement is reachable only when installing an extra.
+
+    An approximation of evaluating a PEP 508 marker with ``extra`` unset, without
+    taking a dependency on ``packaging``: optional only if EVERY top-level or-branch
+    demands an extra. Anything else — including a marker this cannot parse — is
+    treated as REQUIRED, so the failure direction is a loud build error rather than a
+    silent false pass. Checked against the real cases: ``extra == "test"`` and
+    ``python_version >= "3.8.1" and extra == "all"`` are optional, while
+    ``python_version < "3.14" or extra == "foo"`` and ``extra != "x"`` are not.
+    """
+    if not marker.strip():
+        return False
+    return all(re.search(r'\bextra\s*==', branch) for branch in re.split(r'\bor\b', marker))
+
+
 def _verify_closure(dest: Path) -> None:
     """Fail the build if a vendored wheel needs something we did not vendor.
 
@@ -182,10 +198,13 @@ def _verify_closure(dest: Path) -> None:
     for wheel in sorted(dest.glob('*.whl')):
         with zipfile.ZipFile(wheel) as z:
             name = next((n for n in z.namelist() if n.endswith('.dist-info/METADATA')), None)
-            metadata = z.read(name).decode('utf-8', 'replace') if name else ''
+            if name is None:
+                raise RuntimeError(f'{wheel.name} has no dist-info/METADATA; cannot verify '
+                                   f'its dependencies, so the wheel set cannot be trusted.')
+            metadata = z.read(name).decode('utf-8', 'replace')
         for line in re.findall(r'^Requires-Dist:\s*(.+)$', metadata, re.M):
             requirement, _, marker = line.partition(';')
-            if 'extra' in marker:       # optional extra; micropip never installs these
+            if _is_extras_only(marker):     # micropip never installs an extra
                 continue
             dep = _normalize(re.split(r'[<>=!~\[ (]', requirement.strip(), maxsplit=1)[0])
             if dep and dep not in have:
