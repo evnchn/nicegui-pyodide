@@ -28,6 +28,8 @@ import zipfile
 from base64 import urlsafe_b64encode
 from pathlib import Path
 
+from . import vendor as vendor_pkgs                       # stdlib-only; safe to import eagerly
+
 PKG_DIR = Path(__file__).resolve().parent.parent          # nicegui_pyodide/
 TEMPLATES_DIR = PKG_DIR / 'templates'
 PATCHED_JS = PKG_DIR / 'static' / 'nicegui.js'
@@ -43,9 +45,15 @@ VENDOR_FILES = [
     'vue.esm-browser.prod.js',
 ]
 
-# Pure-Python runtime deps micropip pulls from PyPI at page load. ``--self-hosted``
-# replaces this with local wheel paths (see build/vendor.py).
-DEFAULT_INSTALL_ARGS = "['typing-extensions', 'markdown2', 'Pygments', 'docutils', 'tinycss2']"
+# Pure-Python runtime deps micropip pulls from PyPI at page load, derived from the one
+# declaration in build/vendor.py so the CDN list and the vendored wheel set cannot drift.
+# ``--self-hosted`` replaces this with local wheel paths.
+DEFAULT_INSTALL_ARGS = repr(list(vendor_pkgs.RUNTIME_PACKAGES))
+
+# The PyScript config, declared once. templates/pyscript.toml is the readable copy used
+# by default builds; a --self-hosted build serialises this same dict inline (the only
+# form in which PyScript honours `interpreter`). A test asserts the two agree.
+PYSCRIPT_CONFIG = {'packages': ['micropip'], 'files': {'./app.py': './app.py'}}
 
 # Wheel filenames are computed from the real package versions at build time
 # (PEP 427 requires ``{name}-{version}-py3-none-any.whl``; micropip parses the
@@ -309,26 +317,36 @@ def build_wheels(out: Path) -> tuple[str, str]:
 def copy_templates(out: Path, nicegui_wheel: str, self_wheel: str, *,
                    force_app: bool = False, self_hosted: bool = False) -> None:
     html = (TEMPLATES_DIR / 'index.html').read_text()
-    toml = (TEMPLATES_DIR / 'pyscript.toml').read_text()
     install_args = DEFAULT_INSTALL_ARGS
     if self_hosted:
-        from .vendor import vendor  # pylint: disable=import-outside-toplevel
-        subs = vendor(out, html)
+        subs = vendor_pkgs.vendor(out, html)
         cdn = f'<script type="module" src="https://pyscript.net/releases/{subs["pyscript_release"]}/core.js">'
-        if cdn not in html:
-            sys.exit('Could not find the PyScript <script> tag to redirect to the vendored copy.')
-        # ``offline`` is what switches PyScript to the local ./pyscript/<type>/<type>.mjs
-        # interpreter; without it PyScript still reaches for the jsDelivr CDN.
+        py_tag = '<script type="py" src="entrypoint.py" config="pyscript.toml">'
+        if cdn not in html or py_tag not in html:
+            sys.exit('Could not find the PyScript <script> tags to point at the vendored copies.')
+        # PyScript honours the documented `interpreter` config key only when the config is
+        # INLINE — pointing `config=` at a pyscript.toml that sets it is silently ignored
+        # (measured against 2026.2.1). So the config moves into the tag, and no dead
+        # pyscript.toml is written. The `offline` attribute is a belt-and-braces fallback:
+        # PyScript consults it only if `interpreter` is absent, and it resolves to the same
+        # ./pyscript/pyodide/pyodide.mjs path we already write.
+        config = dict(PYSCRIPT_CONFIG, interpreter=subs['interpreter'])
         html = html.replace(cdn, f'<script type="module" offline src="{subs["core_js"]}">')
+        html = html.replace(
+            py_tag,
+            '<script type="py" src="entrypoint.py" '
+            f"config='{json_mod.dumps(config)}'>")
         install_args = subs['install_args']
+    else:
+        (out / 'pyscript.toml').write_text((TEMPLATES_DIR / 'pyscript.toml').read_text())
     (out / 'index.html').write_text(html)
-    (out / 'pyscript.toml').write_text(toml)
     entry = (TEMPLATES_DIR / 'entrypoint.py').read_text()
     entry = (entry.replace('{{NICEGUI_WHEEL}}', nicegui_wheel)
                   .replace('{{PYODIDE_WHEEL}}', self_wheel)
                   .replace('{{PYPI_INSTALL_ARGS}}', install_args))
     (out / 'entrypoint.py').write_text(entry)
-    print('Copied generated files (index.html, entrypoint.py, pyscript.toml)')
+    print('Copied generated files (index.html, entrypoint.py'
+          + (', config inlined — see index.html)' if self_hosted else ', pyscript.toml)'))
 
     # app.py is YOUR code — a rebuild refreshes the generated infra above, it must not
     # silently reset your app. Only write the starter template when absent (or --force).

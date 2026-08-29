@@ -78,6 +78,12 @@ There is nothing to configure: the PyScript release comes from the pinned
 `<script>` tag, and the Pyodide version is read back out of the PyScript bundle
 that was just downloaded, so a release bump needs no change here.
 
+Two mode differences worth knowing. A self-hosted build carries its PyScript config
+**inline in `index.html`** rather than as a `pyscript.toml`, because PyScript honours
+the `interpreter` key only in an inline config — an external toml setting it is
+silently ignored. And `ui.leaflet`'s default tile layer is remote content, so a map
+still needs the network (or your own local tiles) even though the runtime does not.
+
 Edit `dist/app.py` to change the UI, then reload the page. Re-running
 `nicegui-pyodide-build ./dist` refreshes the generated files but **keeps your
 `app.py`** (pass `--force` to reset it to the starter template). The app-building

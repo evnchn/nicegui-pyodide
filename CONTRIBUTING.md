@@ -96,10 +96,13 @@ the next release bump starts clean again.
 * the **PyScript release** lives in `templates/index.html` — that single URL is the
   source of truth, and the Pyodide version is read back out of the downloaded bundle,
   so bumping PyScript is a one-line change;
-* the **PyPI wheel versions** are listed in `vendor.PYPI_WHEELS`, pinned so an
-  air-gapped build is reproducible. They must stay in step with the package names in
-  `cli.DEFAULT_INSTALL_ARGS` (plus their dependencies — `--self-hosted` installs with
-  `deps=False`, so the closure is explicit).
+* the **PyPI wheel versions** are declared once in `vendor.RUNTIME_PACKAGES`
+  (top-level) and `vendor.RUNTIME_TRANSITIVE` (their dependencies), pinned so an
+  air-gapped build is reproducible. `cli.DEFAULT_INSTALL_ARGS` is derived from the
+  first, so the default-build list cannot drift from the vendored set; and because
+  `--self-hosted` installs with `deps=False`, `vendor._verify_closure` re-derives the
+  closure from the downloaded wheels' own `Requires-Dist` and fails the build if
+  `RUNTIME_TRANSITIVE` is short. Adding a package usually means editing one line.
 
 After either bump run `pytest -q tests/test_offline.py`; it builds with
 `--self-hosted`, blocks every non-localhost request in a real browser, and checks the

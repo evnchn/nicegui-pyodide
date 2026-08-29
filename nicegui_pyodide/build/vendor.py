@@ -5,12 +5,17 @@ The stock build leaves three live CDN dependencies in the page: PyScript core
 and the pure-Python wheels ``micropip`` fetches from PyPI. ``--self-hosted`` mirrors
 all three into ``<outdir>/pyscript/`` and rewrites the page to point at them.
 
-The layout is not ours to choose. PyScript's own offline mode triggers on an
-``offline`` attribute on the ``<script type="module">`` that loads ``core.js``, and
-then looks for the interpreter at ``./pyscript/<type>/<type>.mjs`` resolved against
-the *page* URL — so the Pyodide runtime must land in ``<outdir>/pyscript/pyodide/``.
-(The ``interpreter`` key in ``pyscript.toml`` is honoured only on the worker path,
-not for a main-thread ``<script type="py">``.)
+Pointing PyScript at the local interpreter uses its documented ``interpreter`` config
+key — but **only an inline config is honoured**. Measured against 2026.2.1: the same
+key in an external ``pyscript.toml`` referenced by ``config="pyscript.toml"`` is read
+too late and silently ignored, and the page goes to the jsDelivr CDN anyway. So
+``cli.copy_templates`` serialises the config into the tag instead of writing a
+pyscript.toml that would do nothing.
+
+The layout still matters: PyScript's ``offline`` attribute is kept as a fallback, and
+it looks for the interpreter at ``./pyscript/<type>/<type>.mjs`` resolved against the
+*page* URL — hence ``<outdir>/pyscript/pyodide/``, which costs nothing since we choose
+that path for the documented key anyway.
 
 Nothing here is version-guessing: the PyScript release is whatever
 ``templates/index.html`` pins, and the Pyodide version is read back out of the
@@ -25,18 +30,26 @@ import re
 import shutil
 import sys
 import urllib.request
+import zipfile
 from pathlib import Path
 
-# Pure-Python wheels the entrypoint micropip-installs from PyPI. Pinned so an
-# air-gapped build is reproducible; bump deliberately (see CONTRIBUTING.md).
-PYPI_WHEELS = {
-    'typing_extensions': '4.15.0',
+# The pure-Python runtime requirements, declared once. A default build installs these
+# by NAME from PyPI (cli.DEFAULT_INSTALL_ARGS is derived from this dict, so the two can
+# no longer drift); --self-hosted mirrors them as pinned wheels.
+RUNTIME_PACKAGES = {
+    'typing-extensions': '4.15.0',
     'markdown2': '2.5.4',
     'Pygments': '2.19.1',
     'docutils': '0.21.2',
     'tinycss2': '1.4.0',
-    'webencodings': '0.5.1',   # tinycss2's only dependency
 }
+# Transitive deps. --self-hosted installs with deps=False, so the closure must be
+# explicit — but it is not trusted: _verify_closure re-derives it from the downloaded
+# wheels' own metadata and fails the build if this list is short.
+RUNTIME_TRANSITIVE = {
+    'webencodings': '0.5.1',   # tinycss2
+}
+PYPI_WHEELS = {**RUNTIME_PACKAGES, **RUNTIME_TRANSITIVE}
 
 # Pyodide distribution files a bare interpreter needs, plus micropip itself
 # (``pyscript.toml`` asks for it, and Pyodide resolves it through the local lock).
@@ -151,6 +164,38 @@ def _mirror_pyodide(version: str, dest: Path, man: _Manifest) -> None:
     print(f'  pyscript/pyodide/ (Pyodide {version}, Python {lock["info"]["python"]})')
 
 
+def _normalize(name: str) -> str:
+    """PEP 503 normalized distribution name."""
+    return re.sub(r'[-_.]+', '-', name).lower()
+
+
+def _verify_closure(dest: Path) -> None:
+    """Fail the build if a vendored wheel needs something we did not vendor.
+
+    ``deps=False`` means micropip will not rescue a missing transitive dependency at
+    load time — it would surface as an ImportError inside the browser, offline, with
+    no network to fall back on. So the closure is checked here, against the wheels'
+    own ``Requires-Dist``, rather than trusted to stay hand-synced.
+    """
+    have = {_normalize(w.name.split('-')[0]) for w in dest.glob('*.whl')}
+    missing: list[str] = []
+    for wheel in sorted(dest.glob('*.whl')):
+        with zipfile.ZipFile(wheel) as z:
+            name = next((n for n in z.namelist() if n.endswith('.dist-info/METADATA')), None)
+            metadata = z.read(name).decode('utf-8', 'replace') if name else ''
+        for line in re.findall(r'^Requires-Dist:\s*(.+)$', metadata, re.M):
+            requirement, _, marker = line.partition(';')
+            if 'extra' in marker:       # optional extra; micropip never installs these
+                continue
+            dep = _normalize(re.split(r'[<>=!~\[ (]', requirement.strip(), maxsplit=1)[0])
+            if dep and dep not in have:
+                missing.append(f'{wheel.name} requires {dep}')
+    if missing:
+        raise RuntimeError(
+            'Vendored wheel set is not dependency-closed; add these to '
+            'RUNTIME_TRANSITIVE:\n  ' + '\n  '.join(missing))
+
+
 def _mirror_wheels(dest: Path, man: _Manifest) -> list[str]:
     dest.mkdir(parents=True, exist_ok=True)
     names: list[str] = []
@@ -163,7 +208,8 @@ def _mirror_wheels(dest: Path, man: _Manifest) -> list[str]:
         url = files[0]['url']
         man.save(dest / files[0]['filename'], url, _get(url))
         names.append(files[0]['filename'])
-    print(f'  pyscript/wheels/  ({len(names)} pure-Python wheels)')
+    _verify_closure(dest)
+    print(f'  pyscript/wheels/  ({len(names)} pure-Python wheels, dependency-closed)')
     return names
 
 
@@ -201,6 +247,7 @@ def vendor(out: Path, html: str) -> dict:
     print(f'  pyscript/MANIFEST.json  ({len(man.entries)} files, {total // 1024 // 1024} MB)')
     return {
         'core_js': './pyscript/core.js',
+        'interpreter': './pyscript/pyodide/pyodide.mjs',
         'install_args': repr([f'./pyscript/wheels/{w}' for w in wheels]) + ', deps=False',
         'pyscript_release': release,
         'pyodide_version': version,

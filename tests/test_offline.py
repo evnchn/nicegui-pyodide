@@ -21,7 +21,8 @@ from pathlib import Path
 
 import pytest
 
-from nicegui_pyodide.build.cli import build
+from nicegui_pyodide.build import vendor
+from nicegui_pyodide.build.cli import PYSCRIPT_CONFIG, build
 # sibling module, not a package import: bare `pytest` does not put the repo root on
 # sys.path (only `python -m pytest` does), but it does prepend this file's directory.
 from test_browser import EXERCISE_APP
@@ -100,6 +101,10 @@ def test_generated_page_has_no_remaining_cdn_urls(offline_dist):
     html = (offline_dist / 'index.html').read_text()
     assert 'pyscript.net' not in html
     assert 'offline src="./pyscript/core.js"' in html
+    # the documented `interpreter` key, inline — the only form PyScript honours
+    assert '"interpreter": "./pyscript/pyodide/pyodide.mjs"' in html
+    # and no pyscript.toml that would silently do nothing next to it
+    assert not (offline_dist / 'pyscript.toml').exists()
     entrypoint = (offline_dist / 'entrypoint.py').read_text()
     # the PyPI names are gone; every runtime dependency is a local wheel path
     assert "'typing-extensions'" not in entrypoint
@@ -180,3 +185,30 @@ def test_refuses_to_overwrite_a_foreign_pyscript_dir(tmp_path):
     with pytest.raises(SystemExit):
         build(str(tmp_path), self_hosted=True)
     assert (theirs / 'mine.txt').read_text() == 'user data'
+
+
+def test_inline_config_matches_the_toml_template():
+    """The self-hosted build inlines PYSCRIPT_CONFIG; the template is the readable copy."""
+    tomllib = pytest.importorskip('tomllib')
+    template = Path(__file__).resolve().parent.parent / 'nicegui_pyodide' / 'templates' / 'pyscript.toml'
+    assert tomllib.loads(template.read_text()) == PYSCRIPT_CONFIG
+
+
+def test_cdn_install_list_is_derived_not_duplicated():
+    """The names a default build installs are the top-level names --self-hosted vendors."""
+    from nicegui_pyodide.build.cli import DEFAULT_INSTALL_ARGS
+    assert DEFAULT_INSTALL_ARGS == repr(list(vendor.RUNTIME_PACKAGES))
+    assert set(vendor.PYPI_WHEELS) == set(vendor.RUNTIME_PACKAGES) | set(vendor.RUNTIME_TRANSITIVE)
+
+
+def test_vendored_wheels_are_dependency_closed(offline_dist):
+    vendor._verify_closure(offline_dist / 'pyscript' / 'wheels')
+
+
+def test_closure_check_catches_a_missing_transitive_dep(offline_dist, tmp_path):
+    """Instrument check: the closure guard must actually bite on a short wheel set."""
+    for wheel in (offline_dist / 'pyscript' / 'wheels').glob('*.whl'):
+        if not wheel.name.startswith('webencodings'):
+            shutil.copy2(wheel, tmp_path / wheel.name)
+    with pytest.raises(RuntimeError, match='webencodings'):
+        vendor._verify_closure(tmp_path)
