@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import shutil
 import socket
 import threading
@@ -89,9 +88,10 @@ def cdn_dist(tmp_path_factory):
 def test_manifest_records_what_was_vendored(offline_dist):
     manifest = json.loads((offline_dist / 'pyscript' / 'MANIFEST.json').read_text())
     assert manifest['pyscript_release'] == '2026.7.3'
-    # Pyodide moved from 0.2x.y to a CPython-tracking scheme (314.0.3) — assert a version,
-    # not a scheme.
-    assert re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+.*', manifest['pyodide_version'])
+    # Derived, not configured: a pinned PyScript release implies exactly one Pyodide.
+    # Asserted exactly, so picking up a different-but-still-bootable runtime goes red.
+    # (Was `startswith('0.')` — the 0.2x.y scheme Pyodide left behind at 314.)
+    assert manifest['pyodide_version'] == '314.0.3'
     assert manifest['files'], 'manifest lists no vendored files'
     for entry in manifest['files']:
         vendored = offline_dist / 'pyscript' / entry['path']
