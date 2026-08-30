@@ -49,12 +49,11 @@
         };
     </script>
 
-    <!-- setHTML polyfill via DOMPurify (some browsers lack Element.prototype.setHTML) -->
+    <!-- setHTML via DOMPurify, mirroring nicegui/templates/index.html. -->
+    <!-- NOTE: Always use DOMPurify instead of native setHTML because native setHTML strips class attributes. -->
     <script type="module">
-        if (!Element.prototype.setHTML) {
-            const { default: DOMPurify } = await import('./static/dompurify.mjs');
-            Element.prototype.setHTML = function (html) { this.innerHTML = DOMPurify.sanitize(html); };
-        }
+        import DOMPurify from './static/dompurify.mjs';
+        Element.prototype.setHTML = function (html) { this.innerHTML = DOMPurify.sanitize(html); };
     </script>
 
     <script defer src="nicegui.js"></script>

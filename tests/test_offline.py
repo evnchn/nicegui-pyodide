@@ -180,6 +180,41 @@ def test_heavyweight_elements_work_offline(page, exercise_dist, tmp_path):
         httpd.shutdown()
 
 
+def test_sanitizer_keeps_classes_and_literals(page, exercise_dist):
+    """setHTML must be DOMPurify's, not the browser's own.
+
+    Native ``Element.prototype.setHTML`` strips every class attribute and deletes
+    ``<tt>`` outright, which silently kills Pygments highlighting and swallows every
+    ``ui.restructured_text`` inline literal. nicegui's own template always overrides it;
+    ours used to install the override only when the native API was ABSENT, so a modern
+    Chromium got the destructive path. Asserted through the rendered DOM because
+    nothing about it raises.
+    """
+    httpd, base_url = _serve(exercise_dist)
+    try:
+        page.goto(f'{base_url}/index.html', wait_until='domcontentloaded')
+        page.wait_for_function('() => window.__pyodide_ready === true', timeout=BOOT_TIMEOUT)
+        page.wait_for_selector('#app .nicegui-markdown', timeout=20_000)
+
+        assert not page.evaluate(
+            "() => Element.prototype.setHTML.toString().includes('[native code]')"), \
+            'native setHTML is in use; the DOMPurify override did not install'
+        # ui.restructured_text wraps its output in <div class="codehilite">, the hook every
+        # Pygments rule is scoped to. Native setHTML deletes that class, so highlighting
+        # renders flat everywhere -- silently, since the markup is otherwise intact.
+        assert page.evaluate(
+            "() => document.querySelectorAll('#app .nicegui-markdown .codehilite').length"), \
+            'the codehilite class was stripped, so syntax highlighting renders flat'
+        # Scoped to .codehilite, which ONLY ui.restructured_text emits -- a plain ui.markdown
+        # element on the same page also reads "via Pyodide" and would satisfy a page-wide check.
+        page.wait_for_function(
+            "() => [...document.querySelectorAll('#app .nicegui-markdown .codehilite')]"
+            ".some(e => e.innerText.includes('via Pyodide'))",
+            timeout=20_000)
+    finally:
+        httpd.shutdown()
+
+
 def test_refuses_to_overwrite_a_foreign_pyscript_dir(tmp_path):
     """`build .` must not eat a user's own pyscript/ directory."""
     theirs = tmp_path / 'pyscript'
