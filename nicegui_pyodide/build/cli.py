@@ -131,11 +131,15 @@ def prepare_static_files(out: Path) -> None:
             shutil.copy2(f, dst / f.name)
         print(f'  fonts/ ({sum(1 for _ in fonts_src.glob("*.woff2"))} files)')
 
-    if (static / 'dompurify.mjs').exists():
-        dst = out / 'static'
-        dst.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(static / 'dompurify.mjs', dst / 'dompurify.mjs')
-        print('  static/dompurify.mjs')
+    # index.html imports this unconditionally now (native setHTML strips class attributes),
+    # so a missing copy is a broken build, not a skippable extra.
+    if not (static / 'dompurify.mjs').exists():
+        sys.exit(f'{static / "dompurify.mjs"} is missing; index.html imports it to install '
+                 f'Element.prototype.setHTML. Reinstall nicegui.')
+    dst = out / 'static'
+    dst.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(static / 'dompurify.mjs', dst / 'dompurify.mjs')
+    print('  static/dompurify.mjs')
 
 
 # ----------------------------------------------------------------------- components
