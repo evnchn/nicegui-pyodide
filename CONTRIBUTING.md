@@ -95,7 +95,10 @@ the next release bump starts clean again.
 
 * the **PyScript release** lives in `templates/index.html` — that single URL is the
   source of truth, and the Pyodide version is read back out of the downloaded bundle,
-  so bumping PyScript is a one-line change;
+  so bumping PyScript is usually a one-line change. Usually: Pyodide's own file layout
+  can move under you (314 renamed `pyodide.asm.js` to `pyodide.asm.mjs`), which shows up
+  as a 404 mid-vendor. `vendor.py` now reads the glue filename out of `pyodide.mjs`
+  instead of pinning it, but a future layout change would need the same treatment;
 * the **PyPI wheel versions** are declared once in `vendor.RUNTIME_PACKAGES`
   (top-level) and `vendor.RUNTIME_TRANSITIVE` (their dependencies), pinned so an
   air-gapped build is reproducible. `cli.DEFAULT_INSTALL_ARGS` is derived from the

@@ -87,8 +87,11 @@ def cdn_dist(tmp_path_factory):
 
 def test_manifest_records_what_was_vendored(offline_dist):
     manifest = json.loads((offline_dist / 'pyscript' / 'MANIFEST.json').read_text())
-    assert manifest['pyscript_release'] == '2026.2.1'
-    assert manifest['pyodide_version'].startswith('0.')
+    assert manifest['pyscript_release'] == '2026.7.3'
+    # Derived, not configured: a pinned PyScript release implies exactly one Pyodide.
+    # Asserted exactly, so picking up a different-but-still-bootable runtime goes red.
+    # (Was `startswith('0.')` — the 0.2x.y scheme Pyodide left behind at 314.)
+    assert manifest['pyodide_version'] == '314.0.3'
     assert manifest['files'], 'manifest lists no vendored files'
     for entry in manifest['files']:
         vendored = offline_dist / 'pyscript' / entry['path']
@@ -229,3 +232,22 @@ def test_extras_marker_rule(marker, optional):
 def test_self_hosted_rebuild_removes_a_stale_pyscript_toml(offline_dist):
     """A dir rebuilt from default mode must not keep a config the inline one overrides."""
     assert not (offline_dist / 'pyscript.toml').exists()
+
+
+@pytest.mark.parametrize('loader, expected', [
+    ('...loadScript("pyodide.asm.js")...', 'pyodide.asm.js'),      # Pyodide <= 0.29
+    ('...import("./pyodide.asm.mjs")...', 'pyodide.asm.mjs'),      # Pyodide >= 314
+])
+def test_emscripten_glue_name_is_read_from_the_loader(loader, expected):
+    """Pinning either spelling 404s the other release; the loader names its own glue."""
+    assert set(vendor._PYODIDE_ASM_RE.findall(loader)) == {expected}
+    assert expected not in vendor.PYODIDE_FILES
+
+
+def test_vendored_pyodide_has_the_glue_the_loader_asks_for(offline_dist):
+    """End-to-end: whatever pyodide.mjs names must actually be on disk."""
+    pyodide = offline_dist / 'pyscript' / 'pyodide'
+    names = set(vendor._PYODIDE_ASM_RE.findall(
+        (pyodide / vendor.PYODIDE_LOADER).read_text('utf-8', 'replace')))
+    assert len(names) == 1
+    assert (pyodide / names.pop()).is_file()

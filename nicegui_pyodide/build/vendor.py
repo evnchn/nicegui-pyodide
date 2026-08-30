@@ -53,18 +53,24 @@ PYPI_WHEELS = {**RUNTIME_PACKAGES, **RUNTIME_TRANSITIVE}
 
 # Pyodide distribution files a bare interpreter needs, plus micropip itself
 # (the generated config asks for it, and Pyodide resolves it through the local lock).
-PYODIDE_FILES = ['pyodide.mjs', 'pyodide.asm.js', 'pyodide.asm.wasm',
-                 'python_stdlib.zip', 'pyodide-lock.json']
+# The Emscripten glue is deliberately absent: it was renamed pyodide.asm.js ->
+# pyodide.asm.mjs in Pyodide 314, so _mirror_pyodide reads its name out of the loader.
+PYODIDE_LOADER = 'pyodide.mjs'
+PYODIDE_FILES = ['pyodide.asm.wasm', 'python_stdlib.zip', 'pyodide-lock.json']
 PYODIDE_PACKAGES = ['micropip', 'packaging']
 
 _PYSCRIPT_SRC_RE = re.compile(r'https://pyscript\.net/releases/([0-9][^/"\']*)/core\.js')
 # PyScript hardcodes the Pyodide it was built against as a default parameter:
-#   type:"pyodide",module:(v="0.29.3")=>`https://cdn.jsdelivr.net/pyodide/v${v}/full/pyodide.mjs`
-# The second pattern is the loose fallback for a build that inlines the version instead.
-_PYODIDE_VERSION_RES = (
-    re.compile(r'["\']?pyodide["\']?\s*,\s*module:\s*\([^)]*?=\s*["\']([0-9][^"\']*)["\']'),
-    re.compile(r'cdn\.jsdelivr\.net/pyodide/v([0-9][A-Za-z0-9.\-]*)/'),
-)
+#   type:"pyodide",module:(v="314.0.3")=>`https://cdn.jsdelivr.net/pyodide/v${v}/full/pyodide.mjs`
+# A looser `cdn.jsdelivr.net/pyodide/v<ver>/` pattern used to sit behind this one as a
+# fallback; it was dropped in the 2026.7.3 bump. The URL is a template literal in every
+# release we have seen, so the fallback never fired — and had it ever fired, it would have
+# matched any jsDelivr URL in the bundle and vendored that version silently. Failing loudly
+# on an unrecognised bundle is the better direction.
+_PYODIDE_VERSION_RE = re.compile(
+    r'["\']?pyodide["\']?\s*,\s*module:\s*\([^)]*?=\s*["\']([0-9][^"\']*)["\']')
+# The Emscripten glue, as named by pyodide.mjs itself (.js pre-314, .mjs since).
+_PYODIDE_ASM_RE = re.compile(r'pyodide\.asm\.m?js')
 # Relative module/asset references a bundler emits as plain string literals. Nested
 # segments are allowed: a future chunk layout may not stay flat.
 _REL_ASSET_RE = re.compile(
@@ -141,19 +147,28 @@ def _mirror_pyscript(base: str, dest: Path, man: _Manifest) -> None:
 def _pyodide_version(pyscript_dir: Path) -> str:
     """Read the Pyodide release PyScript was built against out of the mirrored bundle."""
     sources = sorted(p for p in pyscript_dir.rglob('*') if p.suffix in ('.js', '.mjs'))
-    for pattern in _PYODIDE_VERSION_RES:
-        found = {m for p in sources for m in pattern.findall(p.read_text('utf-8', 'replace'))}
-        if len(found) == 1:
-            return found.pop()
-        if found:
-            raise RuntimeError(f'Ambiguous Pyodide version in the PyScript bundle: {sorted(found)}')
+    found = {m for p in sources
+             for m in _PYODIDE_VERSION_RE.findall(p.read_text('utf-8', 'replace'))}
+    if len(found) == 1:
+        return found.pop()
+    if found:
+        raise RuntimeError(f'Ambiguous Pyodide version in the PyScript bundle: {sorted(found)}')
     raise RuntimeError('Could not read the Pyodide version out of the PyScript bundle.')
 
 
 def _mirror_pyodide(version: str, dest: Path, man: _Manifest) -> None:
     base = f'https://cdn.jsdelivr.net/pyodide/v{version}/full/'
     dest.mkdir(parents=True, exist_ok=True)
-    for name in PYODIDE_FILES:
+    loader = _get(base + PYODIDE_LOADER)
+    man.save(dest / PYODIDE_LOADER, base + PYODIDE_LOADER, loader)
+    # The loader names its own Emscripten glue, and the spelling has already changed once
+    # (pyodide.asm.js -> pyodide.asm.mjs in Pyodide 314). Read it rather than pin it: a
+    # rename would otherwise 404 the build, and pinning both spellings would 404 too.
+    asm = set(_PYODIDE_ASM_RE.findall(loader.decode('utf-8', 'replace')))
+    if len(asm) != 1:
+        raise RuntimeError(f'Expected exactly one Emscripten glue name in {PYODIDE_LOADER}, '
+                           f'found {sorted(asm)}.')
+    for name in [asm.pop(), *PYODIDE_FILES]:
         man.save(dest / name, base + name, _get(base + name))
     lock = json.loads((dest / 'pyodide-lock.json').read_text())
     for pkg in PYODIDE_PACKAGES:
