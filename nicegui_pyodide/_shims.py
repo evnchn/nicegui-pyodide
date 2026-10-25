@@ -57,10 +57,13 @@ _STUB_ROOTS = {
 # Exact stdlib(-ish) submodules to stub even though their parent package stays real.
 # ``multiprocessing.synchronize`` pulls the C-extension ``_multiprocessing`` (semaphores),
 # which Pyodide removed; nicegui imports it eagerly in server.py and native_mode.py.
+# ``multiprocessing.forkserver`` reaches the same C-extension via ``resource_tracker``;
+# nicegui >= 3.15 imports it eagerly in run.py.
 # The parent ``multiprocessing`` package and ``multiprocessing.connection`` import fine
-# and must stay real, so we only intercept this one leaf.
+# and must stay real, so we only intercept these leaves.
 _STUB_MODULES = {
     'multiprocessing.synchronize',
+    'multiprocessing.forkserver',
 }
 
 _installed = False

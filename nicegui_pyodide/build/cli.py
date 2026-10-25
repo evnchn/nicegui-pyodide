@@ -61,10 +61,10 @@ PYSCRIPT_CONFIG = {'packages': ['micropip'], 'files': {'./app.py': './app.py'}}
 
 # The shipped static/nicegui.js is patched from this exact NiceGUI release. Building
 # against a different patch release risks a client/JS protocol mismatch → warn loudly.
-TESTED_NICEGUI = '3.14.0'
+TESTED_NICEGUI = '3.18.0'
 # The whole dependency pin the warning below must cover: any version in this range other
 # than TESTED_NICEGUI ships JS that was never regenerated for it.
-SUPPORTED_NICEGUI = 'nicegui>=3.14,<3.15'
+SUPPORTED_NICEGUI = 'nicegui>=3.18,<3.19'
 
 
 def _nicegui_meta():

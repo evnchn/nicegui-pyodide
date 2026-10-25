@@ -81,6 +81,13 @@ def test_client_page_resolve_surface() -> None:
     assert not missing, f'stock `page` is missing resolve_* methods Client uses: {sorted(missing)}'
 
 
+def test_handle_handshake_signature() -> None:
+    # runtime.mount() awaits handle_handshake positionally, standing in for the socket handshake.
+    assert inspect.iscoroutinefunction(Client.handle_handshake)
+    params = list(inspect.signature(Client.handle_handshake).parameters)
+    assert params == ['self', 'socket_id', 'tab_id', 'old_tab_id', 'document_id', 'next_message_id']
+
+
 if __name__ == '__main__':
     for _name, _fn in sorted(globals().items()):
         if _name.startswith('test_') and callable(_fn):
