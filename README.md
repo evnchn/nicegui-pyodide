@@ -145,7 +145,7 @@ Genuinely server-bound features (last row) are documented as unsupported rather 
 ## Version pinning
 
 `nicegui_pyodide/static/nicegui.js` is a pyodide-patched copy of a specific
-NiceGUI release's `nicegui.js`. The `nicegui>=3.14,<3.15` pin in `pyproject.toml`
+NiceGUI release's `nicegui.js`. The `nicegui>=3.18,<3.19` pin in `pyproject.toml`
 keeps them in lockstep. To support a newer NiceGUI, regenerate the patched JS
 against that release and widen the pin.
 

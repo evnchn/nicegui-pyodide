@@ -127,11 +127,9 @@ class PyodideRuntime:
 
         setattr(window, '__pyodide_ready', True)
 
-        # drive the real client lifecycle (connect handlers, app.storage.tab) without a socket.
-        # tab storage MUST exist before handle_handshake runs the connect handlers, which may
-        # access app.storage.tab synchronously.
-        await core.app.storage._create_tab_storage(self.client.tab_id)  # pylint: disable=protected-access
-        self.client.handle_handshake('pyodide', 'pyodide', None)
+        # drive the real client lifecycle (connect handlers, app.storage.tab) without a socket;
+        # handle_handshake creates the tab storage before it runs the connect handlers.
+        await self.client.handle_handshake('pyodide', self.client.tab_id, None, 'pyodide', None)
         await self.outbox.flush()
 
     def _collect_components(self) -> list:
