@@ -77,7 +77,8 @@ with Client(page('/')) as client:
 
     ui.leaflet(center=(51.5, -0.09))
     ui.xterm()
-    ui.scene()
+    with ui.scene() as scene:
+        scene.sphere()  # object JS is a library, not a component
 '''
 
 
@@ -166,5 +167,8 @@ def test_browser_smoke(page, base_url, upload_file):
     page.wait_for_selector('#app .leaflet-container', timeout=20_000)   # leaflet.js loaded via override
     page.wait_for_selector('#app .xterm', timeout=20_000)              # xterm.js loaded via override
     page.wait_for_selector('#app canvas', timeout=20_000)             # scene WebGL canvas (window.socket shim)
+    page.wait_for_function(  # the sphere's JS loaded and created a mesh
+        "() => getElement(document.querySelector('#app canvas').closest('[id^=ng-]')).scene.children.some((m) => m.object_id && m.object_id !== 'ground')",
+        timeout=20_000)
 
     assert not fatal, 'fatal browser errors detected:\n' + '\n'.join(fatal)

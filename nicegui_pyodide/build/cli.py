@@ -152,7 +152,7 @@ def prepare_components(out: Path) -> None:
             getattr(_ui, name)
         except Exception:  # pylint: disable=broad-except
             pass
-    from nicegui.dependencies import esm_modules, js_components  # pylint: disable=import-outside-toplevel
+    from nicegui.dependencies import esm_modules, js_components, libraries  # pylint: disable=import-outside-toplevel
     _, pkg, _ = _nicegui_meta()
     elements_dir = pkg / 'elements'
 
@@ -163,7 +163,8 @@ def prepare_components(out: Path) -> None:
             shutil.rmtree(d)
 
     print('Copying component JS...')
-    for comp in js_components.values():
+    # libraries = ui.scene's object JS (sphere.js, …); runtime.py points them here
+    for comp in [*js_components.values(), *libraries.values()]:
         if not comp.path.exists():
             continue
         try:
