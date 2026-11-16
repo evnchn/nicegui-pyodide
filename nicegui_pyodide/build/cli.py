@@ -61,10 +61,10 @@ PYSCRIPT_CONFIG = {'packages': ['micropip'], 'files': {'./app.py': './app.py'}}
 
 # The shipped static/nicegui.js is patched from this exact NiceGUI release. Building
 # against a different patch release risks a client/JS protocol mismatch → warn loudly.
-TESTED_NICEGUI = '3.18.0'
+TESTED_NICEGUI = '4.0.0'
 # The whole dependency pin the warning below must cover: any version in this range other
 # than TESTED_NICEGUI ships JS that was never regenerated for it.
-SUPPORTED_NICEGUI = 'nicegui>=3.18,<3.19'
+SUPPORTED_NICEGUI = 'nicegui>=4.0,<4.1'
 
 
 def _nicegui_meta():
@@ -152,7 +152,7 @@ def prepare_components(out: Path) -> None:
             getattr(_ui, name)
         except Exception:  # pylint: disable=broad-except
             pass
-    from nicegui.dependencies import esm_modules, js_components  # pylint: disable=import-outside-toplevel
+    from nicegui.dependencies import esm_modules, js_components, libraries  # pylint: disable=import-outside-toplevel
     _, pkg, _ = _nicegui_meta()
     elements_dir = pkg / 'elements'
 
@@ -163,7 +163,8 @@ def prepare_components(out: Path) -> None:
             shutil.rmtree(d)
 
     print('Copying component JS...')
-    for comp in js_components.values():
+    # libraries = ui.scene's object JS (sphere.js, …); runtime.py points them here
+    for comp in [*js_components.values(), *libraries.values()]:
         if not comp.path.exists():
             continue
         try:

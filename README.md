@@ -130,7 +130,7 @@ special handling in the browser. Status against the pinned NiceGUI release:
 | --- | --- | --- |
 | labels, buttons, inputs, layout, tables, most Quasar wrappers | ✅ works | pure client-side; no server assumption |
 | `ui.markdown` (incl. Mermaid, code highlighting) | ✅ works (override) | codehilite CSS served from `./dynamic_resources/` instead of a server route |
-| `ui.scene` / `ui.scene_view` (3D / WebGL) | ✅ works (shim) | the `init` handshake polled `window.socket.id`; a minimal `window.socket` stand-in is provided in Pyodide mode. Browser-verified (WebGL canvas renders) |
+| `ui.scene` / `ui.scene_view` (3D / WebGL) | ✅ works (shim) | the `init` handshake polled `window.socket.id`; a minimal `window.socket` stand-in is provided in Pyodide mode, and built-in objects (`scene.sphere()`, …) load from the build. Custom `Object3D` subclasses with their own `component=` file are not copied. Browser-verified (a sphere renders) |
 | `ui.leaflet` (map) | ✅ works (override) | same `init` shim, plus CSS/JS (`leaflet`, optional `leaflet-draw`) resolved from `./esm/nicegui-leaflet/`. Browser-verified (map + tiles render) |
 | `ui.xterm` (terminal) | ✅ works (override) | `xterm.css` resolved from `./esm/nicegui-xterm/` instead of a server route. Browser-verified (terminal renders) |
 | `ui.echart` with a `theme` **URL** string | ⚠️ partial | inline theme objects work; a theme passed as a URL `fetch()`es a server path — it fails soft (theme just doesn't apply). Use an inline theme object |
@@ -145,7 +145,7 @@ Genuinely server-bound features (last row) are documented as unsupported rather 
 ## Version pinning
 
 `nicegui_pyodide/static/nicegui.js` is a pyodide-patched copy of a specific
-NiceGUI release's `nicegui.js`. The `nicegui>=3.18,<3.19` pin in `pyproject.toml`
+NiceGUI release's `nicegui.js`. The `nicegui>=4.0,<4.1` pin in `pyproject.toml`
 keeps them in lockstep. To support a newer NiceGUI, regenerate the patched JS
 against that release and widen the pin.
 

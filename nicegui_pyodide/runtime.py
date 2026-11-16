@@ -33,6 +33,34 @@ if TYPE_CHECKING:
 ELEMENTS_DIR = Path(nicegui.__file__).parent / 'elements'
 
 
+def _patch_scene_object_urls() -> None:
+    """Point ``ui.scene`` objects at the copies the build put under ``./components/``.
+
+    Stock NiceGUI sends each object's JS as ``/_nicegui/<version>/libraries/<key>``, a
+    server route whose key hashes the file's mtime, so the build cannot pre-render it.
+    Rewrite it on first use to an absolute URL (``scene.js`` imports it as-is).
+    """
+    from js import URL, document  # type: ignore  # pylint: disable=import-outside-toplevel,import-error
+    from nicegui.dependencies import libraries  # pylint: disable=import-outside-toplevel
+    from nicegui.elements.scene.scene_object3d import Object3D  # pylint: disable=import-outside-toplevel
+
+    create = Object3D._create  # pylint: disable=protected-access
+    if getattr(create, 'nicegui_pyodide', False):
+        return
+    prefix = f'/_nicegui/{nicegui.__version__}/libraries/'
+
+    def _create(self) -> None:
+        url = self._component_url  # pylint: disable=protected-access
+        library = libraries.get(url[len(prefix):]) if url and url.startswith(prefix) else None
+        if library is not None and library.path.is_relative_to(ELEMENTS_DIR):
+            rel = library.path.relative_to(ELEMENTS_DIR).as_posix()
+            type(self)._component_url = URL.new(f'components/{rel}', document.baseURI).href
+        create(self)
+
+    _create.nicegui_pyodide = True  # type: ignore[attr-defined]
+    Object3D._create = _create  # type: ignore[method-assign]  # pylint: disable=protected-access
+
+
 class PyodideRuntime:
     """Runtime for running NiceGUI inside Pyodide/PyScript.
 
@@ -82,6 +110,8 @@ class PyodideRuntime:
         client.tab_id = 'pyodide'
         client._temporary_socket_id = 'pyodide'  # pylint: disable=protected-access
         client._request = Request({'type': 'http', 'headers': [], 'query_string': b''})  # pylint: disable=protected-access
+
+        _patch_scene_object_urls()
 
         # proxies registered on the JS bridge, tracked so a re-mount can destroy them
         self._proxies: list = []
